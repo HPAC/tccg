@@ -1,2 +1,2 @@
-# tccg
-Tensor Contraction Code Generator
+# Tensor Contraction Code Generator #
+The source code will be available shortly...
