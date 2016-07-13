@@ -113,7 +113,7 @@ Further exmaples (.tccg files) can be generated via:
 # Benchmark
 -----------
 
-TCCG provides a [benchmark for tensor contractions](https://github.com/HPAC/tccg/blob/master/benchmark/benchmark.py).
+TCCG provides a [benchmark for tensor contractions](https://github.com/HPAC/tccg/blob/master/benchmark/).
 
     python benchmark.py
 
