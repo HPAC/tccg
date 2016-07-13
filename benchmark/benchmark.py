@@ -279,9 +279,9 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        #    sizeStr += "%s:%d;"%(s,sizesTmp[s])
        #print "lookupSizes[\"%s-%s-%s\"] = \"%s\""%(tensors[0],tensors[1],tensors[2],sizeStr)
 
-       print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".gett")
+       print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".tccg")
        gett.write("echo \""+test+"\" | tee >> gett_tmp.dat\n")
-       gett.write("tccg --testing --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".gett | tee > %s%d.dat\n"%(benchmarkName,counter))
+       gett.write("tccg --testing --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
        gett.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
 
        ctfFilename = benchmarkName+"CTF"+"%d"%counter + ".cpp"
