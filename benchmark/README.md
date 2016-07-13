@@ -22,10 +22,10 @@ microarchitecture. ECC is enabled, and both Intel Speedstep and Intel TurboBoost
 are disabled for all measurements. The C++ compiler of choice is Intel's icpc
 16.0.1 20151021 with flags -O3 -xhost -mkl.
 
+![ttc](https://github.com/HPAC/tccg/blob/master/benchmark/transC.png)
+
 ![ttc](https://github.com/HPAC/tccg/blob/master/benchmark/GETT_LoG_TTGT.png)
 
 ![ttc](https://github.com/HPAC/tccg/blob/master/benchmark/benchmark.png)
-
-![ttc](https://github.com/HPAC/tccg/blob/master/benchmark/transC.png)
 
 Benchmark version: **v0.1**
