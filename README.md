@@ -93,7 +93,8 @@ to make TCCG available.
 
 Please run **tccg --help** to get an overview of TCCG's parameters.
 
-Here is an exemplary input file to TCCG: 
+Here is an exemplary input file to TCCG:
+
     C[a,b,i,j] = A[i,m,a] * B[m,j,b]
     a = 24
     b = 24
@@ -102,8 +103,12 @@ Here is an exemplary input file to TCCG:
     m = 24
 
 TCCG command line arguments: 
+
     tccg --arch=hsw --numThreads=1 --floatType=s example.tccg
 
+Further exmaples (.tccg files) can be generated via:
+
+    python bechmark/benchmark.py
 
 # Benchmark
 -----------
