@@ -1,6 +1,7 @@
 # Copyright (C) 2016 Paul Springer (springer@aices.rwth-aachen.de) - All Rights Reserved
 
 import argparse
+import traceback
 from gett import Gett
 import sqlite3
 import time
@@ -37,6 +38,8 @@ class TccgArgs:
         self.maxImplementations = 16
         self.compiler = "icpc"
         self.blasLib = "-mkl"
+        self.cudaLib = "-L${CUDA_ROOT}/lib64 -lcublas"
+        self.cudaInclude = "-I${CUDA_ROOT}/include"
         self.database = "tccg.db"
         self.affinity = "compact,1"
         self.verbose = 0
@@ -64,7 +67,7 @@ class TccgArgs:
        ret += "architecture".ljust(20)+self.architecture+newline
        ret += "CPU".ljust(20)+"%s"%tccg_util.getCPUarchitecture()+newline
        ret += "floatType".ljust(20)+self.floatTypeA+newline
-       ret += "tmp directory".ljust(20)+self.tmpDirectory+newline
+       ret += "tmp directory".ljust(20)+"${TCCG_ROOT}/tccg/"+self.tmpDirectory+newline
        ret += "hostname".ljust(20)+ socket.gethostname()+newline
        ret += "batched GEMM".ljust(20)+ "%d"%self.batchedGEMM+newline
        ret += "------------------------------------------"+newline
@@ -162,11 +165,15 @@ class Tccg:
        elif( maxLoGFlops >= maxTTGTFlops ):
            # generate LoG
            self.gemmLoop.genCode()
+           filename = "loopOverGemm.hpp"
+           shutil.copyfile("./loopGemm.hpp",directory+"/"+filename)
            filename = "loopOverGemm.cpp"
            shutil.copyfile("./loopGemm.cpp",directory+"/"+filename)
        else:
            # generate TTGT
            workspace = self.ttgemmt.genCode(self.args.maxWorkspace)
+           filename = "ttgemmt.hpp"
+           shutil.copyfile("./ttgemmt.hpp",directory+"/"+filename)
            filename = "ttgemmt.cpp"
            shutil.copyfile("./ttgemmt.cpp",directory+"/"+filename)
            if( os.path.exists("./ttc_transpositions") ):
@@ -178,11 +185,8 @@ class Tccg:
         tccg_root = os.environ['TCCG_ROOT']
 
         # open/create SQL database
-        connection = sqlite3.connect(tccg_root +"/" + self.args.database)
+        connection = sqlite3.connect(tccg_root +"/tccg/" + self.args.database)
         cursor = connection.cursor()
-
-        # copy makefile to tmp directory
-        shutil.copyfile("../Makefile","./Makefile")
 
         #create tables, if necessary
         sql_util.createTables(cursor)
@@ -231,8 +235,18 @@ class Tccg:
         ###########################################
         # compile versions
         ###########################################
+        # copy makefile to tmp directory
+        fr = open("../Makefile","r")
+        fw = open("./Makefile","w")
+        fw.write("BLAS_LIB=%s"%self.args.blasLib)
+        fw.write("CUDA_LIB=%s"%self.args.cudaLib)
+        fw.write("CUDA_INCLUDE=%s"%self.args.cudaInclude)
+        for l in fr:
+            fw.write(l)
+        fw.close()
+        fr.close()
+
         my_env = os.environ.copy()
-        my_env["BLAS_LIB"] = self.args.blasLib
         my_env["CXX"] = self.args.compiler
         arch = "CPU"
         if( self.args.architecture  == "cuda"):
@@ -272,6 +286,7 @@ class Tccg:
         ttgtVersions = {}
         loopVersions = {}
         for line in proc.stdout:
+            Line = line
             line = line.lower()
             if( line.find(":") != -1 ):
                 implementationType = line.split(":")[0]
@@ -301,9 +316,9 @@ class Tccg:
             if( line.find("tcc_end") != -1):
                 break
             if( len(line) > 2 ):
-                print line.replace('\n','')
+                print Line.replace('\n','')
             if( line.find("error") != -1 or line.find("fault") != -1):
-                print FAIL + line + ENDC
+                print FAIL + Line + ENDC
                 failCount += 1
                 break
             time.sleep(0.1)
@@ -1016,8 +1031,8 @@ def main():
     parser = argparse.ArgumentParser(description='Generate high-performance C++ code for a given tensor contraction.')
     parser.add_argument('filename', metavar='filename', type=str, help='filename of the file which contains the symbolic description of the tensor contraction')
     parser.add_argument('--verbose', action="store_true", help='Verbose output (useful for debugging).')
-    parser.add_argument('--testing', action="store_true", help='enable testing of the geneated routines.')
-    parser.add_argument('--keep', action="store_true", help='keep generated C++ files under ${TCCG_ROOT}/tmp')
+    parser.add_argument('--testing', action="store_true", help='enable testing of the generated routines.')
+    parser.add_argument('--keep', action="store_true", help='keep generated C++ files under ${TCCG_ROOT}/tccg/tmp')
     parser.add_argument('--noBatchedGEMM', action="store_true", help='Disable batched GEMMs for LoG variant.')
     parser.add_argument('--generateOnly', action="store_true", help='only generate code')
     parser.add_argument('--gettOnly', action="store_true", help='Only use GETT implementation')
@@ -1090,7 +1105,7 @@ def main():
         print FAIL + "ERROR: TCCG_ROOT environment variable not set. Make sure that this variable points to the directory containing 'tccg.py'" + ENDC
         exit(-1)
 
-    os.chdir(_tccg_root)
+    os.chdir(_tccg_root+"/tccg")
 
     tmpDirectory = createTmpDirectory()
     tccgArgs.tmpDirectory  = tmpDirectory 
@@ -1105,6 +1120,8 @@ def main():
         exit(-1)
     f = open("../../config.cfg","r")
     blasLib = ""
+    cudaLib = ""
+    cudaInclude = ""
     for l in f:
         pos = l.find("#") # remove comments
         line = l
@@ -1114,23 +1131,34 @@ def main():
             blasLib = line.split("=")[1]
             if( blasLib.lower().find("mkl") == -1 ):
                 tccgArgs.batchedGEMM = 0 #disable batched gemm
-    tccgArgs.blasLib=blasLib
+        if( line.find("CUDA_LIB") != -1):
+            cudaLib = line.split("=")[1]
+        if( line.find("CUDA_INCLUDE") != -1):
+            cudaInclude = line.split("=")[1]
+    if( blasLib != "" ):
+        tccgArgs.blasLib=blasLib
+    if( cudaLib != "" ):
+        tccgArgs.cudaLib=cudaLib
+    if( cudaInclude != "" ):
+        tccgArgs.cudaInclude = cudaInclude
   
     ###########################################
     # generate versions
     ###########################################
     print OKGREEN + "[generate] Generate implementations ...                ", ENDC
-    #try:
-    tccg = Tccg( tccgArgs )
-    tccg.codeGen()
-    os.chdir("..")
-    if( (not args.keep) or args.generateOnly):
-        shutil.rmtree(tmpDirectory)
+    try:
+        tccg = Tccg( tccgArgs )
+        tccg.codeGen()
+        os.chdir("..")
+        if( (not args.keep) or args.generateOnly):
+            shutil.rmtree(tmpDirectory)
     except:
-        print "An error has occured."
+        print "An error has occurred."
+        print traceback.print_exc(file=sys.stdout)
         os.chdir("..")
         if( not args.keep):
-            shutil.rmtree(tmpDirectory)
+           if( os.path.exists(tmpDirectory) ):
+              shutil.rmtree(tmpDirectory)
         print "You could try to run with --useDynamicMemory option and see if the problem still exists."
 
     os.chdir(workingDir)

@@ -1,6 +1,5 @@
 # Copyright (C) 2016 Paul Springer (springer@aices.rwth-aachen.de) - All Rights Reserved
 from Index import *
-import traceback
 import itertools
 import sys
 import traceback
@@ -193,6 +192,14 @@ def generateTranspose(IN, OUT, floatType, alpha, beta, numThreads,
 
 #   print perm, size, lda, ldb
 
+   try:
+       ttcVersion = ttc.ttc_util.getVersion()
+       if( ttcVersion[0] < 0 or ttcVersion[1] < 1 or ttcVersion[2] < 0 ):
+           print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.0"
+           exit(-1)
+   except:
+       print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.0"
+       exit(-1)
    ttc_args = ttc.ttc_util.TTCargs(perm, size)
    ttc_args.alpha = alpha
    ttc_args.beta = beta

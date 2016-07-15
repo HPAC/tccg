@@ -29,7 +29,8 @@ CPU2: all
 GPU:
 	${MAKE} clean
 	${MAKE} GPU2
-GPU2: CXX_FLAGS = -rdc true -O3 -lgomp -Xcudafe "--diag_suppress=declared_but_not_referenced" -I ${CUDA_ROOT}/include -L${CUDA_ROOT}/lib64 -lcublas
+GPU2: CXX_FLAGS = -rdc true -O3 -lgomp -Xcudafe "--diag_suppress=declared_but_not_referenced" ${CUDA_INCLUDE}
+GPU2: CXX_LINK = ${CUDA_LIB}
 GPU2: CXX = nvcc
 GPU2: all
 

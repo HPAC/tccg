@@ -12,6 +12,8 @@ contraction where the sum over 'k' as well as the loops over 'i' and 'j' are
 implicit. Further examples of tensor contractions are: C[i0,j0,j1] = A[i0,k0] * B[j1,k0,j0];
 C[i0,j0,j1,i1] = A[i0,k0,i1] * B[j1,k0,j0]; C[i0,j0,j1,i1] = A[k0,i0,k1,i1] * B[k1,j1,k0,j0] ...
 
+Current version: **v0.1.0**
+
 # Key Features
 --------------
 
@@ -61,31 +63,24 @@ In order to use TCCG, a working C compiler and some BLAS library (e.g., Intel's 
 # Install
 ---------
 
-1. Create a directory where you want to install TCCG:
+1. Clone the repository into a desired directory and change to that location:
 
-    mkdir /path/to/tccg
+    git clone https://github.com/HPAC/tccg.git
+    cd tccg
 
-2. Make sure that you export the TCCG_ROOT environment variable (add to your .bashrc):
+2. Install TCCG:
 
-    export TCCG_ROOT=/path/to/tccg
+    python setup.py install --user
 
-3. Clone the repository into the newly created directory:
+3. Export the TCCG_ROOT environment variable (add to your .bashrc):
 
-    git clone https://github.com/HPAC/tccg.git $TCCG_ROOT
+    export TCCG_ROOT=`pwd`
 
 4. Setup the your BLAS library within the $TCCG_ROOT/config.cfg (default: mkl).
 
-5. Install TCCG:
-
-    cd $TCCG_ROOT
-    python setup.py install --user
-
-6. Make sure that the installed script can be found in your path. You might have to
+5. You might have to add the installed location to your PATH environment variable:
    
     export PATH=$PATH:~/.local/bin
-
-to make TCCG available.    
-
 
 
 # Getting Started
@@ -104,7 +99,7 @@ Here is an exemplary input file to TCCG:
 
 TCCG command line arguments: 
 
-    tccg --arch=hsw --numThreads=1 --floatType=s example.tccg
+    tccg --arch=avx2 --numThreads=1 --floatType=s example.tccg
 
 Further exmaples (.tccg files) can be generated via:
 

@@ -18,7 +18,7 @@ setup(name="tccg",
         )
 
 print ""
-output = "# "+ FAIL + "IMPORTANT"+ENDC+": execute 'export TCCG_ROOT=%s/tccg' #"%(os.path.dirname(os.path.realpath(__file__)))
+output = "# "+ FAIL + "IMPORTANT"+ENDC+": execute 'export TCCG_ROOT=%s' #"%(os.path.dirname(os.path.realpath(__file__)))
 print '#'*(len(output)-2*len(FAIL)+1)
 print output
 print '#'*(len(output)-2*len(FAIL)+1)

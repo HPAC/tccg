@@ -185,7 +185,6 @@ void %s(const char *transa, const char *transb,
                                             header = "void gemm_%d(cublasHandle_t cublas_handle, const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(self.numImpl,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
                                         else:
                                             header = "void gemm_%d(const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(self.numImpl,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
-                                    codeHpp += header + ";\n"
                                     codeblocks = [] #stores all the building blocks (e.g., transpose, gemm)
                                     tmpA = A
                                     tmpB = B
@@ -274,6 +273,7 @@ void %s(const char *transa, const char *transb,
                                     else:
                                         print "%d gemm-based versions generated so far.                                 "%self.numImpl
                                     code += implementation
+                                    codeHpp += header + ";\n"
 
                                     # determine maximum workspace across all implementations
                                     maxWork = max(workspace, maxWork)
