@@ -1,1 +1,7 @@
 .*.swp
+
+# Code generator database
+*.db
+
+# Build directory
+build/
