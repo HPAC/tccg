@@ -15,6 +15,9 @@ In addition to this benchmark you can also generate further tensor contractions 
 
 The examples generated via transC.py correspond to those of Fig. 10 of our publication and highlight the performance differences between GETT, TTGT and LoG for this specific TC.
 
+Since this benchmark may evolve over time and to make comparisons easier, please refer to the current version of the benchmark.
+
+Benchmark version: **v0.1**
 # Performance Results
 ---------------------
 We evaluated the performance of TCCG on a single core of an Intel Xeon E5-2680 v3 CPU based on the Intel Haswell
