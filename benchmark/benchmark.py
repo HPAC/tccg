@@ -100,6 +100,32 @@ testcases_transC = [
     "abc-bk-akc"
     ]
 
+_sortedTCs = [  # TCs are sorted w.r.t. single-precision GEMM performance on a single Haswell core (i.e., first entry is bandwidth-bound while the last entry is compute bound)
+        "abcde-efbad-cf",
+        "abcde-efcad-bf",
+        "abcd-dbea-ec",
+        "abcde-ecbfa-fd",
+        "abcd-deca-be",
+        "abc-bda-dc",
+        "abcd-ebad-ce",
+        "abcdef-dega-gfbc",
+        "abcdef-dfgb-geac",
+        "abcdef-degb-gfac",
+        "abcdef-degc-gfab",
+        "abc-dca-bd",
+        "abcd-ea-ebcd",
+        "abcd-eb-aecd",
+        "abcd-ec-abed",
+        "abc-adec-ebd",
+        "ab-cad-dcb",
+        "ab-acd-dbc",
+        "abc-acd-db",
+        "abc-adc-bd",
+        "ab-ac-cb",
+        "abcd-aebf-fdec",
+        "abcd-eafd-fbec",
+        "abcd-aebf-dfce"
+        ]
 
 def normalize(tc): #normalize labels
     C = tc.split('-')[0]
@@ -141,7 +167,7 @@ def createTensor( encoding, label ):
    T = T[:-2] + "]"
    return T
 
-def print_gett(A, B, C, sizes, filename):
+def print_gett(A, B, C, sizes, filename, stdout):
        f = open(filename, "w")
        f.write("%s = %s * %s\n"%(C, A, B))
        sizeStr = ""
@@ -160,7 +186,7 @@ def print_gett(A, B, C, sizes, filename):
        B = B[2:-1].split(',')
        for c in B:
            cstr += c.strip()
-       print cstr,"&",sizeStr
+       stdout.append("%s & %s"%(cstr,sizeStr))
        f.close()
 
 def print_ctf(code, filename):
@@ -217,7 +243,7 @@ def print_matlab(size,astr,bstr,cstr, dataType, f):
     f.write("gflops = %e;\n"%(flops/1e9))
     f.write("fprintf('%s-%s-%s %%f\\n',gflops/t)\n\n"%(cstr,astr,bstr))
 
-def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatType,matlabfile, sizes = {}):
+def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatType,matlabfile, stdout, sizes = {}):
     ctf_sh = open("ctf_"+benchmarkName+".sh","w")
     ctf_sh.write("CTF_ROOT=%s\n"%_CTFRoot)
     gett = open("gett_"+benchmarkName+".sh","w")
@@ -279,7 +305,7 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        #    sizeStr += "%s:%d;"%(s,sizesTmp[s])
        #print "lookupSizes[\"%s-%s-%s\"] = \"%s\""%(tensors[0],tensors[1],tensors[2],sizeStr)
 
-       print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".tccg")
+       print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".tccg", stdout)
        gett.write("echo \""+test+"\" | tee >> gett_tmp.dat\n")
        gett.write("tccg --testing --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
        gett.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
@@ -326,18 +352,24 @@ def main():
    matlabfile.write("addpath(pwd)\n")
    matlabfile.write("cd %s\n"%os.getcwd())
 
+   stdout = []
    #print "#ccsd:"
-   generate(testcases_ccsd,"ccsd", arch,numThreads,maxImplementations,floatType,matlabfile )
+   generate(testcases_ccsd,"ccsd", arch,numThreads,maxImplementations,floatType,matlabfile, stdout )
    #print "#intensli:"
    sizes = {}
    sizes["j"] = 24
-   generate(testcases_intensli,"intensli", arch,numThreads,maxImplementations,floatType,matlabfile , sizes)
+   generate(testcases_intensli,"intensli", arch,numThreads,maxImplementations,floatType,matlabfile, stdout , sizes)
    #print "#ao2mo:"
-   generate(testcases_ao2mo,"ao2mo", arch,numThreads,maxImplementations,floatType,matlabfile )
+   generate(testcases_ao2mo,"ao2mo", arch,numThreads,maxImplementations,floatType,matlabfile, stdout )
    #print "#ccsd_t:"
-   generate(testcases_ccsd_t,"ccsd_t", arch,numThreads,maxImplementations,floatType,matlabfile )
-   #generate_ccsd_t(arch,numThreads,maxImplementations,floatType,matlabfile )
+   generate(testcases_ccsd_t,"ccsd_t", arch,numThreads,maxImplementations,floatType,matlabfile, stdout )
    matlabfile.close()
+
+   for tc in _sortedTCs:
+       for generatedTC in stdout:
+           if( generatedTC.startswith(tc) ):
+               print generatedTC
+               break;
 
 if __name__ == "__main__":
    main()
