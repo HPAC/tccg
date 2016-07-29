@@ -160,7 +160,7 @@ def print_gett(A, B, C, sizes, filename):
        B = B[2:-1].split(',')
        for c in B:
            cstr += c.strip()
-       #print cstr,"&",sizeStr
+       print cstr,"&",sizeStr
        f.close()
 
 def print_ctf(code, filename):
@@ -219,7 +219,7 @@ def print_matlab(size,astr,bstr,cstr, dataType, f):
 
 def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatType,matlabfile, sizes = {}):
     ctf_sh = open("ctf_"+benchmarkName+".sh","w")
-    ctf_sh.write("CTF_ROOT=%s\n"%CTFRoot)
+    ctf_sh.write("CTF_ROOT=%s\n"%_CTFRoot)
     gett = open("gett_"+benchmarkName+".sh","w")
 
     gett.write("rm -f gett_tmp.dat\n") #remove old dat files
