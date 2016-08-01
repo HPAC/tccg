@@ -166,9 +166,9 @@ class Tccg:
            # generate LoG
            self.gemmLoop.genCode()
            filename = "loopOverGemm.hpp"
-           shutil.copyfile("./loopGemm.hpp",directory+"/"+filename)
+           shutil.copyfile("./loopOverGemm.hpp",directory+"/"+filename)
            filename = "loopOverGemm.cpp"
-           shutil.copyfile("./loopGemm.cpp",directory+"/"+filename)
+           shutil.copyfile("./loopOverGemm.cpp",directory+"/"+filename)
        else:
            # generate TTGT
            workspace = self.ttgemmt.genCode(self.args.maxWorkspace)
@@ -701,7 +701,7 @@ class Tccg:
        if( self.gett.numImpl > 0 ):
            code += "#include \"gett.hpp\"\n"
        if( self.gemmLoop.numImpl > 0 ):
-           code += "#include \"loopGemm.hpp\"\n"
+           code += "#include \"loopOverGemm.hpp\"\n"
        if( self.ttgemmt.numImpl > 0 ):
            code += "#include \"ttgemmt.hpp\"\n"
        if( self.gemm.numImpl > 0 ):

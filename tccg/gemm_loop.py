@@ -227,7 +227,7 @@ class GemmLoop:
         C = self.C
         alpha = self.alpha
         beta = self.beta
-        code = "#include \"loopGemm.hpp\"\n"
+        code = "#include \"loopOverGemm.hpp\"\n"
         codeHpp = ""
         if( self.arch.architectureName  == "cuda" ):
             code += "#include <cublas_v2.h>\n"
@@ -446,7 +446,7 @@ void %s(const char *transa, const char *transb,
         fgett = open("loopGemm.cpp","w")
         fgett.write(code)
         fgett.close()
-        fgett = open("loopGemm.hpp","w")
+        fgett = open("loopOverGemm.hpp","w")
         fgett.write(codeHpp)
         fgett.close()
 

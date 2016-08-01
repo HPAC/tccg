@@ -1,1 +1,7 @@
+*.pyc
 .*.swp
+benchmark/*.cpp
+benchmark/*.tccg
+benchmark/*.m
+benchmark/*.sh
+
