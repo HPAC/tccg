@@ -443,7 +443,7 @@ void %s(const char *transa, const char *transb,
                         self.numImpl += 1
                         print "%d loop-based versions generated so far."%self.numImpl
 
-        fgett = open("loopGemm.cpp","w")
+        fgett = open("loopOverGemm.cpp","w")
         fgett.write(code)
         fgett.close()
         fgett = open("loopOverGemm.hpp","w")
