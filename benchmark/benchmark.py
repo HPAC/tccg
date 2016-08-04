@@ -12,7 +12,6 @@ _dimensionMultiple = 4
 _fullbenchmark = 0
 
 _columnMajor = 1
-_useReferenceVersion = 1
 #########################################
 # Do not change setting below this line
 #########################################
@@ -244,12 +243,12 @@ def print_matlab(size,astr,bstr,cstr, dataType, f):
     f.write("gflops = %e;\n"%(flops/1e9))
     f.write("fprintf('%s-%s-%s %%f\\n',gflops/t)\n\n"%(cstr,astr,bstr))
 
-def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatType,matlabfile, stdout, sizes = {}):
+def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion,sizes = {}):
     ctf_sh = open("ctf_"+benchmarkName+".sh","w")
     ctf_sh.write("CTF_ROOT=%s\n"%_CTFRoot)
-    gett = open("gett_"+benchmarkName+".sh","w")
+    benchmarkFile.write("echo \"%s\"\n"%benchmarkName)
 
-    gett.write("rm -f gett_tmp.dat\n") #remove old dat files
+    benchmarkFile.write("rm -f gett_tmp.dat\n") #remove old dat files
     ctf_sh.write("rm -f ctf_tmp.dat\n") #remove old dat files
 
     counter = 0
@@ -307,13 +306,14 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        #print "lookupSizes[\"%s-%s-%s\"] = \"%s\""%(tensors[0],tensors[1],tensors[2],sizeStr)
 
        print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".tccg", stdout)
-       gett.write("echo \""+test+"\" | tee >> gett_tmp.dat\n")
-       if( _useReferenceVersion ):
+       benchmarkFile.write("echo \""+test+"\"\n")
+       benchmarkFile.write("echo \""+test+"\" >> gett_tmp.dat\n")
+       if( useReferenceVersion ):
            testing = "--testing"
        else:
            testing = ""
-       gett.write("tccg %s --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(testing, maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
-       gett.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
+       benchmarkFile.write("tccg %s --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(testing, maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
+       benchmarkFile.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
 
        ctfFilename = benchmarkName+"CTF"+"%d"%counter + ".cpp"
        print_matlab(sizesTmp, tensors[1], tensors[2], tensors[0], floatType, matlabfile)
@@ -323,13 +323,14 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        ctf_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=1  mpirun -np 1 -genv I_MPI_FABRICS shm ./a.out | grep GF >> ctf_tmp.dat\n")
        counter += 1
 
-    gett.write("cat gett_tmp.dat | sed '$!N;s/\\n/ /' > gett_"+benchmarkName+".dat\n") #
+    benchmarkFile.write("cat gett_tmp.dat | sed '$!N;s/\\n/ /' > tccg_"+benchmarkName+".dat\n") #
     ctf_sh.write("cat ctf_tmp.dat | sed '$!N;s/\\n/ /' > ctf_"+benchmarkName+".dat\n") #
 
 def main():
    parser = argparse.ArgumentParser(description='Generate high-performance C++ code for a given tensor contraction.')
    parser.add_argument('floatType', metavar='floatType', type=str, help='floatType can bei either \'s\' or \'d\'.')
    parser.add_argument('--numThreads', type=int, help='number of threads.')
+   parser.add_argument('--disableReference', action="store_true", help='disable the reference version; this makes benchmarking much faster.')
    parser.add_argument('--maxImplementations', type=int, help='limits the number of GETT candidates (default: 16).')
    parser.add_argument('--arch', metavar='arch', type=str, help='architecture can be either avx2 (default) or avx512.')
  
@@ -339,6 +340,9 @@ def main():
    maxImplementations = 16
    arch = "avx2"
    floatType = "s"
+   useReferenceVersion = 1
+   if( args.disableReference ):
+       useReferenceVersion = 0
    if( args.arch ):
        arch = args.arch
    if( args.numThreads ):
@@ -357,24 +361,26 @@ def main():
    matlabfile.write("addpath(pwd)\n")
    matlabfile.write("cd %s\n"%os.getcwd())
 
+   benchmarkFile = open("tccg_benchmark.sh","w")
    stdout = []
-   #print "#ccsd:"
-   generate(testcases_ccsd,"ccsd", arch,numThreads,maxImplementations,floatType,matlabfile, stdout )
-   #print "#intensli:"
    sizes = {}
    sizes["j"] = 24
-   generate(testcases_intensli,"intensli", arch,numThreads,maxImplementations,floatType,matlabfile, stdout , sizes)
-   #print "#ao2mo:"
-   generate(testcases_ao2mo,"ao2mo", arch,numThreads,maxImplementations,floatType,matlabfile, stdout )
-   #print "#ccsd_t:"
-   generate(testcases_ccsd_t,"ccsd_t", arch,numThreads,maxImplementations,floatType,matlabfile, stdout )
+   generate(testcases_intensli,"intensli", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion, sizes)
+   generate(testcases_ao2mo,"ao2mo", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion )
+   generate(testcases_ccsd,"ccsd", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion )
+   generate(testcases_ccsd_t,"ccsd_t", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion )
    matlabfile.close()
+   benchmarkFile.close()
 
    for tc in _sortedTCs:
        for generatedTC in stdout:
            if( generatedTC.startswith(tc) ):
                print generatedTC
                break;
+
+   print ""
+   print "[SUCCESS] The file 'tccg_benchmark.sh' has been created."
+   print "You can run the benchmark via '. tccg_benchmark.sh'"
 
 if __name__ == "__main__":
    main()
