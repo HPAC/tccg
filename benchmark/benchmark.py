@@ -12,6 +12,7 @@ _dimensionMultiple = 4
 _fullbenchmark = 0
 
 _columnMajor = 1
+_useReferenceVersion = 1
 #########################################
 # Do not change setting below this line
 #########################################
@@ -307,7 +308,11 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
 
        print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".tccg", stdout)
        gett.write("echo \""+test+"\" | tee >> gett_tmp.dat\n")
-       gett.write("tccg --testing --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
+       if( _useReferenceVersion ):
+           testing = "--testing"
+       else:
+           testing = ""
+       gett.write("tccg %s --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(testing, maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
        gett.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
 
        ctfFilename = benchmarkName+"CTF"+"%d"%counter + ".cpp"
@@ -323,10 +328,10 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
 
 def main():
    parser = argparse.ArgumentParser(description='Generate high-performance C++ code for a given tensor contraction.')
+   parser.add_argument('floatType', metavar='floatType', type=str, help='floatType can bei either \'s\' or \'d\'.')
    parser.add_argument('--numThreads', type=int, help='number of threads.')
    parser.add_argument('--maxImplementations', type=int, help='limits the number of GETT candidates (default: 16).')
    parser.add_argument('--arch', metavar='arch', type=str, help='architecture can be either avx2 (default) or avx512.')
-   parser.add_argument('--floatType', metavar='floatType', type=str, help='floatType can bei either \'s\' or \'d\'.')
  
    args = parser.parse_args()
 

@@ -9,6 +9,8 @@ To generate the input files (.tccg) corresponding to all the test-cases within t
 
     python benchmark.py
 
+See python benchmark.py --help for further information.
+
 In addition to this benchmark you can also generate further tensor contractions via:
 
     python transC.py
