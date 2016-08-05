@@ -882,30 +882,27 @@ class Gett:
                                                            0.0, self.numThreads,
                                                            0, 1, 0,
                                                            self.arch.architectureName,
-                                                           self.generateOnly)
+                                                           self.generateOnly, 0)
                                                    (transposeNameB, bandwidthB, permB, sizeB, ldb, ldbOut) = generateTranspose(Bhat,
                                                            Btilde,
                                                            self.floatType, 1.0,
                                                            0.0, self.numThreads,
                                                            0, 1, 0,
-                                                           self.arch.architectureName,self.generateOnly)
+                                                           self.arch.architectureName,self.generateOnly, 0)
                                                    (transposeNameC, bandwidthC, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
                                                            ChatMicro,
                                                            self.floatType,
                                                            self.alpha, 1.0,
                                                            self.numThreads, 1,
                                                            0, 0,
-                                                           self.arch.architectureName,self.generateOnly)
+                                                           self.arch.architectureName,self.generateOnly, 0)
                                                    (transposeNameC_bz, bandwidthC_bz, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
                                                            ChatMicro,
                                                            self.floatType,
                                                            self.alpha, 0.0,
                                                            self.numThreads, 1,
                                                            0, 0,
-                                                           self.arch.architectureName,self.generateOnly)
-                                                   #(transposeNameC, bandwidthC, permC, sizeC, ldc, ldcOut) = generateTranspose(ABtilde, Chat, self.floatType, self.alpha, 1.0, self.numThreads, 1, 0, 0, self.arch.architectureName)
-                                                   #(transposeNameC_bz, bandwidthC_bz, permC, sizeC, ldc, ldcOut) = generateTranspose(ABtilde, Chat, self.floatType, self.alpha, 0.0, self.numThreads, 1, 0, 0, self.arch.architectureName)
-
+                                                           self.arch.architectureName,self.generateOnly, 0)
 
                                                    # include headers
                                                    code = "#include \"ttc_transpositions/%s.h\"\n"%transposeNameC 

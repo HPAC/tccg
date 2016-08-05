@@ -60,7 +60,8 @@ class TccgArgs:
        else:
            newline = "\n"
        ret = "-----------------SETTINGS-----------------"+newline
-       ret += "Version".ljust(20)+"v0.1.0"+newline
+       ret += "Version".ljust(20)+"v0.1.1"+newline
+       ret += "inputfile".ljust(20)+"%s"%self.filename+newline
        ret += "#threads".ljust(20)+"%d"%self.numThreads+newline
        ret += "maxImplementations".ljust(20)+"%d"%self.maxImplementations+newline
        ret += "compiler".ljust(20)+ tccg_util.getCompilerVersion(self.compiler)+newline

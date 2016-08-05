@@ -194,7 +194,7 @@ void %s(const char *transa, const char *transb,
                                         transposeA = Transpose(A, indicesA,
                                                 self.floatType, 1.0, 0.0,
                                                 self.numThreads, self.arch,
-                                                self.generateOnly)
+                                                self.generateOnly, 1)
                                         if( self.useAsGEMM == 0 ):
                                            codeblocks.append(transposeA)
                                            tmpA = transposeA.OUT
@@ -203,7 +203,8 @@ void %s(const char *transa, const char *transb,
                                     if( B.transposeRequired( indicesB ) ):
                                         transposeB = Transpose(B, indicesB,
                                                 self.floatType, 1.0, 0.0,
-                                                self.numThreads, self.arch,self.generateOnly)
+                                                self.numThreads, self.arch,
+                                                self.generateOnly, 1)
                                         if( self.useAsGEMM == 0 ):
                                            codeblocks.append(transposeB)
                                            tmpB = transposeB.OUT
@@ -219,7 +220,7 @@ void %s(const char *transa, const char *transb,
                                         transposeC = Transpose(gemm.OUT,
                                                 self.C.indices, self.floatType,
                                                 1.0, self.beta, self.numThreads,
-                                                self.arch,self.generateOnly)
+                                                self.arch,self.generateOnly, 1)
                                         transposeC.renameOutput(self.C.label)
                                         transposeC.setGenericBeta()
                                         codeblocks.append(transposeC)

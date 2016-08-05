@@ -12,7 +12,7 @@ contraction where the sum over 'k' as well as the loops over 'i' and 'j' are
 implicit. Further examples of tensor contractions are: C[i0,j0,j1] = A[i0,k0] * B[j1,k0,j0];
 C[i0,j0,j1,i1] = A[i0,k0,i1] * B[j1,k0,j0]; C[i0,j0,j1,i1] = A[k0,i0,k1,i1] * B[k1,j1,k0,j0] ...
 
-Current version: **v0.1.0**
+Current version: **v0.1.1**
 
 # Key Features
 --------------
@@ -143,6 +143,10 @@ article [(pdf)](https://arxiv.org/abs/1607.00145):
 }
 ``` 
 
+# Changelog
+-----------
+V0.1.1:
+   * Improved performance for TTGT (based on improvements to [TTC](https://github.com/HPAC/TTC))
 
 # Feedback & Contributions
 -----------

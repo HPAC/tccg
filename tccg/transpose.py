@@ -71,7 +71,7 @@ class GEMM:
         self.OUT.label = label
 
 class Transpose:
-    def __init__ (self, A, indices, floatType, alpha, beta, numThreads, arch, generateOnly ):
+    def __init__ (self, A, indices, floatType, alpha, beta, numThreads, arch, generateOnly, useStreamingStores  ):
         self.generateOnly = generateOnly
         self.arch = arch
         self.IN = copy.deepcopy(A)
@@ -80,6 +80,7 @@ class Transpose:
         self.beta = beta
         self.numThreads = numThreads
         self.useGenericBeta = 0
+        self.streamingStores = useStreamingStores 
 
         # create new output tensor
         self.OUT= copy.deepcopy(A)
@@ -112,7 +113,8 @@ class Transpose:
         indentLevel += 1
 
         (transposeName, bandwidth, perm, size, lda, ldb) = generateTranspose(self.IN, self.OUT, self.floatType, self.alpha,
-                self.beta, self.numThreads,0,0,0,self.arch.architectureName, self.generateOnly  )
+                self.beta, self.numThreads,0,0,0,self.arch.architectureName,
+                self.generateOnly, self.streamingStores  )
         size_str = ""
         for s in size:
             size_str += "%d, "%s

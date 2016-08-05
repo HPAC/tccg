@@ -306,13 +306,14 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        #print "lookupSizes[\"%s-%s-%s\"] = \"%s\""%(tensors[0],tensors[1],tensors[2],sizeStr)
 
        print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".tccg", stdout)
-       benchmarkFile.write("echo \""+test+"\"\n")
+       benchmarkFile.write("echo \""+benchmarkName+"%d"%counter+"\"\n")
        benchmarkFile.write("echo \""+test+"\" >> gett_tmp.dat\n")
        if( useReferenceVersion ):
            testing = "--testing"
        else:
            testing = ""
        benchmarkFile.write("tccg %s --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(testing, maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
+       benchmarkFile.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep -i \"error\"\n")
        benchmarkFile.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
 
        ctfFilename = benchmarkName+"CTF"+"%d"%counter + ".cpp"
