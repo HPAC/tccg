@@ -63,6 +63,10 @@ class TccgArgs:
        ret += "Version".ljust(20)+"v0.1.1"+newline
        ret += "inputfile".ljust(20)+"%s"%self.filename+newline
        ret += "#threads".ljust(20)+"%d"%self.numThreads+newline
+       if(self.compiler == "g++"):
+            ret += "thread affinity: ".ljust(20)+"GOMP_CPU_AFFINITY=%s\n"%self.affinity
+       else:
+            ret += "thread affinity: ".ljust(20)+"KMP_AFFINITY=%s\n"%self.affinity
        ret += "maxImplementations".ljust(20)+"%d"%self.maxImplementations+newline
        ret += "compiler".ljust(20)+ tccg_util.getCompilerVersion(self.compiler)+newline
        ret += "architecture".ljust(20)+self.architecture+newline
@@ -764,7 +768,7 @@ class Tccg:
            code +="        if(relError > 1e-4){\n"
        else:
            code +="        if(relError > 1e-9){\n"
-       code +="            printf(\"i: %d relError: %.8e\\n\",i,relError);\n"
+       code +="            printf(\"i: %l relError: %.8e\\n\",i,relError);\n"
        code +="            error += 1;\n"
        code +="            return 0;\n"
        code +="         }\n"
@@ -1046,6 +1050,13 @@ def main():
     parser.add_argument('--arch', metavar='arch', type=str, help='architecture can be either avx2 (default), avx512, cuda.')
     parser.add_argument('--compiler', metavar='compiler', type=str, help='compiler can be either icpc (default), g++ or nvcc.')
     parser.add_argument('--floatType', metavar='floatType', type=str, help='floatType can bei either \'s\' or \'d\'.')
+    parser.add_argument('--affinity', metavar='affinity', type=str, help="""thread affinity (WARNING: this
+    value should to be specified by the user explicitly because it can effect
+    performance severely and the optimal choice depends on the
+    enumeration/numbering of the cores on your system)
+    The thread affinity respectively sets the value for the 'KMP_AFFINITY' or the 'GOMP_CPU_AFFINITY' environment variable for icpc or g++ compiler.
+       For instance, using --compiler=icpc _and_ --affinity=compact,1 will set 'KMP_AFFINITY=compact,1'.
+       Similarly, using --compiler=g++ _and_ --affinity=0-4 will set 'GOMP_CPU_AFFINITY=0-4'.""")
 
     args = parser.parse_args()
 
@@ -1088,6 +1099,19 @@ def main():
         else:
             print "ERROR: floatType %s is not supported yet."%args.floatType
             exit(-1)
+    if( args.affinity):
+        tccgArgs.affinity = args.affinity
+
+    print tccgArgs
+
+    if( not args.affinity):
+        if(tccgArgs.compiler == "g++" ):
+            tccgArgs.affinity = "0-%d"%multiprocessing.cpu_count()
+            print WARNING + "WARNING: you did not specify an thread affinity. We are using: GOMP_CPU_AFFINITY=%s by default"%tccgArgs.affinity +ENDC
+            print WARNING + "WARNING: The default thread affinity might be suboptimal depending on the numbering of your CPU cores. We recommend using a ''compact'' thread affinity even for g++ (i.e., simulate KMP_AFFINITY=compact)."+ENDC
+        else:
+            tccgArgs.affinity = "compact,1"
+            print WARNING + "WARNING: you did not specify an thread affinity. We are using: KMP_AFFINITY=%s by default"%tccgArgs.affinity +ENDC
 
     tccgArgs.workingDir = workingDir
     tccgArgs.verbose = args.verbose
@@ -1150,17 +1174,15 @@ def main():
     try:
         tccg = Tccg( tccgArgs )
         tccg.codeGen()
-        os.chdir("..")
-        if( (not args.keep) or args.generateOnly):
-            shutil.rmtree(tmpDirectory)
     except:
         print "An error has occurred."
         print traceback.print_exc(file=sys.stdout)
-        os.chdir("..")
-        if( not args.keep):
-           if( os.path.exists(tmpDirectory) ):
-              shutil.rmtree(tmpDirectory)
         print "You could try to run with --useDynamicMemory option and see if the problem still exists."
+
+    # remove/delete temporary directory
+    os.chdir("..")
+    if( (not args.keep) and os.path.exists(tmpDirectory) ):
+        shutil.rmtree(tmpDirectory)
 
     os.chdir(workingDir)
 

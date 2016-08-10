@@ -265,11 +265,11 @@ class avx512:
 
         self.packedPostfix = "ps"
         self.scalarPostfix = "ss"
-        self.registerType = "__m256"
+        self.registerType = "__m512"
         if( self.floatType == "double" ):
             self.packedPostfix = "pd"
             self.scalarPostfix = "sd"
-            self.registerType = "__m256d"
+            self.registerType = "__m512"
 
     def getPeakGFLOPS(self):
         return self.frequency * self.numFMAcycle * self.registerSize * 2
@@ -280,7 +280,7 @@ class avx512:
         else:
            defineStr = ""
         reg.setzero()
-        return Instruction("%s%s%s = _mm512_setzero_%s();\n"%(indent, self.packedPostfix, defineStr, reg.name), 1)
+        return Instruction("%s%s%s = _mm512_setzero_%s();\n"%(indent, defineStr, reg.name, self.packedPostfix), 1)
 
     def store(self, dst , offset, reg, indent):
        ins = Instruction("%s_mm512_store_%s(%s + %d, %s);\n"%(indent, self.packedPostfix, dst, offset, reg.name), 0)

@@ -31,3 +31,5 @@ for k in kvalues:
 bash.write("cat tmp.dat | sed '$!N;s/\\n/ /' > transC.dat\n") #
 
 bash.close()
+
+print "You may run the benchmark by executing: '. transC.sh'"
