@@ -734,9 +734,6 @@ class Gett:
                for key in estimatedGflops:
                    sortedEstimatedGflops.append(estimatedGflops[key])
                sortedEstimatedGflops.sort(reverse=True)
-           #if( estimate_or_generate == 1):
-           #    print "XXX",len(estimatedGflops)
-           #    exit(-1)
 
            for variant_id in range(len(self.gemmVariants)):
                variant = self.gemmVariants[variant_id]
@@ -752,11 +749,11 @@ class Gett:
                        nr = 4
                elif( self.arch.architectureName == "avx512" ):
                    if( self.floatType == "float" ):
-                       mr = 48
-                       nr = 8
+                       mr = 16
+                       nr = 30
                    elif( self.floatType == "double" ):
                        mr = 24
-                       nr = 8
+                       nr = 4
                mc1 = mr
                targetMc = 192
                if( self.floatType == "double" ):
