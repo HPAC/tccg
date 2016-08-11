@@ -64,9 +64,9 @@ class TccgArgs:
        ret += "inputfile".ljust(20)+"%s"%self.filename+newline
        ret += "#threads".ljust(20)+"%d"%self.numThreads+newline
        if(self.compiler == "g++"):
-            ret += "thread affinity: ".ljust(20)+"GOMP_CPU_AFFINITY=%s\n"%self.affinity
+            ret += "thread affinity".ljust(20)+"GOMP_CPU_AFFINITY=%s"%self.affinity+newline
        else:
-            ret += "thread affinity: ".ljust(20)+"KMP_AFFINITY=%s\n"%self.affinity
+            ret += "thread affinity".ljust(20)+"KMP_AFFINITY=%s"%self.affinity+newline
        ret += "maxImplementations".ljust(20)+"%d"%self.maxImplementations+newline
        ret += "compiler".ljust(20)+ tccg_util.getCompilerVersion(self.compiler)+newline
        ret += "architecture".ljust(20)+self.architecture+newline
