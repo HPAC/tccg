@@ -163,7 +163,8 @@ class Tccg:
        if( maxGettFlops >= max(maxLoGFlops, maxTTGTFlops) ):
            # generate GETT
            self.gett.genCode(key)
-           filename = self.gett.getName(key)+".cpp"
+           #filename = self.gett.getName(key)+".cpp"
+           filename = "gett.cpp"
            shutil.copyfile("./gett0.cpp",directory+"/"+filename)
            if( os.path.exists("./ttc_transpositions") ):
                shutil.copytree("./ttc_transpositions",directory+"/ttc_transpositions")
