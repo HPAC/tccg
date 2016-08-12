@@ -266,7 +266,13 @@ void %s(const char *transa, const char *transb,
                                            traceback.print_stack()   
                                            exit(-1)
 
-                                    implementation = header + "\n{\n" + tmpCode + implementation
+                                    workspaceCode = "   //REQUIRED WORKSPACE: %d bytes\n"%workspace
+                                    workspaceCode += "   if( work_ != 0 && (*work_) == -1 )\n"
+                                    workspaceCode += "   {\n"
+                                    workspaceCode += "      *work_ = %d;\n"%workspace
+                                    workspaceCode += "      return;\n"
+                                    workspaceCode += "   }\n"
+                                    implementation = header + "\n{\n" + workspaceCode + tmpCode + implementation
                                     implementation += "}\n"
                                     self.numImpl += 1
                                     if( self.useAsGEMM == 0 ):

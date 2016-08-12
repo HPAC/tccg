@@ -250,17 +250,23 @@ class Gett:
        code += "%s//updating %s <- %s %s\n"%(level*indent, C_hat,Atilde, Btilde)
 
        if(self.numThreads > 1):
-          code += "#pragma omp parallel for collapse(3)\n"
+          code += "#pragma omp parallel for collapse(2)\n"
        for upperBound in variant:
            (inc, loopVar, offsetA, offsetB, offsetC) = self._getIncAndLoop(upperBound, offsetA, offsetB, offsetC)
            if( loopVar == 'in1_'):
               code += "%s%s C_reg[%d] __attribute__((aligned(%d)));\n"%(level*indent, self.floatType, mc1 * nc1,4096)
+
+           if(self.numThreads > 1 and loopVar == 'in1_'): 
+               # in the parallel case this has to come later in order to resolve conflicts with collpase(2)
+               code += self._declareMindices(level, indent, mIndRemainder)
+               code += self._declareNindices(level, indent, nIndRemainder)
            code += "%sfor( int %s = 0; %s < (%s/%s); %s ++){\n"%(level*indent, loopVar, loopVar, upperBound, inc, loopVar)
            level += 1
-           if( loopVar == 'im_'):
-               code += self._declareMindices(level, indent, mIndRemainder)
-           if( loopVar == 'in_'):
-               code += self._declareNindices(level, indent, nIndRemainder)
+           if(self.numThreads == 1): 
+               if( loopVar == 'im_'):
+                   code += self._declareMindices(level, indent, mIndRemainder)
+               if( loopVar == 'in_'):
+                   code += self._declareNindices(level, indent, nIndRemainder)
 
        #if( mc1 > self.mr ):
        #    code += "%sfor( int im1_ = 0; im1_ < MC1; im1_+= MR ){\n"%(level*indent)
