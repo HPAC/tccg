@@ -134,7 +134,7 @@ article [(pdf)](https://arxiv.org/abs/1607.00145):
    author      = {Paul Springer and Paolo Bientinesi},
    title       = {{Design of a high-performance GEMM-like Tensor-Tensor Multiplication}},
    archivePrefix = "arXiv",
-   eprint = {1603.02297},
+   eprint = {1607.00145},
    primaryClass = "quant-ph",
    journal     = {CoRR},
    year        = {2016},
