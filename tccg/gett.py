@@ -952,6 +952,8 @@ class Gett:
 
                                                    key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, tensorA3.getIndexStr() +"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr())
                                                    gettName = self.getName(key)
+                                                   if( len(fastestKey) > 0 ): 
+                                                       gettName = "gett"
                                                    code += self.getHeader(gettName) + "\n{\n"
                                                    
                                                    tmpCode = self.declareVariables()
