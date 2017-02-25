@@ -206,11 +206,11 @@ def generateTranspose(IN, OUT, floatType, alpha, beta, numThreads,
 
    try:
        ttcVersion = ttc.ttc_util.getVersion()
-       if( ttcVersion[0] < 0 or ttcVersion[1] < 1 or ttcVersion[2] < 1 ):
-           print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.1"
+       if( ttcVersion[0] < 0 or ttcVersion[1] < 1 or ttcVersion[2] < 2 ):
+           print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.2"
            exit(-1)
    except:
-       print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.1"
+       print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.2"
        exit(-1)
    ttc_args = ttc.ttc_util.TTCargs(perm, size)
    ttc_args.alpha = alpha
