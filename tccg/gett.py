@@ -17,8 +17,9 @@ ENDC = '\033[0m'
 class Gett:
     def __init__(self, A, B, C, alpha, beta,
                  numThreads, arch, floatType, 
-                 maxImplementations, useDynamicMemory, fast, generateOnly ):
+                 maxImplementations, useDynamicMemory, fast, generateOnly, useTimings ):
 
+        self.useTimings = useTimings
         self.generateOnly = generateOnly
         self.useDynamicMemory = useDynamicMemory  
         self.maxImplementations = maxImplementations
@@ -292,6 +293,8 @@ class Gett:
        code = code[:-1] + "};\n"
        # unpack C
        code += "%s//updating %s\n"%(level*indent,microTileC)
+       #if( self.useTimings ):
+       #    code += "%sdouble start_ = omp_get_wtime();\n"%(level*indent)
        code += "%sif( update ){\n"%(level*indent)
        level += 1
        code += "%s%s<%s>(C_reg, &C[%s], alpha, beta, lda, ldb);\n"%(level*indent,transposeNameC, size_str, offsetC)
@@ -301,6 +304,9 @@ class Gett:
        code += "%s%s<%s>(C_reg, &C[%s], alpha, lda, ldb);\n"%(level*indent,transposeNameC_bz, size_str, offsetC)
        level -= 1
        code += "%s}\n"%(level*indent)
+       #if( self.useTimings ):
+       #    code += "%stime_pack_c += omp_get_wtime() - start_;\n"%(level*indent)
+       #    code += "%sbytes_pack_c += (%f);\n"%(level*indent,self.floatSize * mc1 * nc1)
        for upperBound in variant[1:]:
            level -= 1
            code += "%s}\n"%(level*indent)
@@ -340,6 +346,14 @@ class Gett:
        code += "%sC_L2 = L2;\n"%(level*indent)
        code += "%sA_L2 = C_L2 + MC*NC;\n"%(level*indent) #TODO: alignment for each temporary array
        code += "%sB_L2 = A_L2 + MC*KC;\n"%(level*indent)
+       if( self.useTimings ):
+           code += "%stime_pack_a = 0;\n"%(level*indent)
+           code += "%sbytes_pack_a = 0;\n"%(level*indent)
+           code += "%stime_pack_b = 0;\n"%(level*indent)
+           code += "%sbytes_pack_b = 0;\n"%(level*indent)
+           code += "%stime_pack_c = 0;\n"%(level*indent)
+           code += "%sbytes_pack_c = 0;\n"%(level*indent)
+           code += "%sdouble time_start_ = omp_get_wtime();\n"%indent
        code += "\n"
        return code
 
@@ -391,6 +405,8 @@ class Gett:
 
        code = "%s{ // pack A\n"%(level*indent)
        level+=1
+       if( self.useTimings ):
+           code += "%sdouble start_ = omp_get_wtime();\n"%(level*indent)
        size_str = ""
        for s in size:
            size_str += "%d, "%s
@@ -404,6 +420,9 @@ class Gett:
            code += "%s,"%s
        code = code[:-1] + "};\n"
        code += "%s%s<%s>(&A[%s], A_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
+       if( self.useTimings ):
+           code += "%stime_pack_a += omp_get_wtime() - start_;\n"%(level*indent)
+           code += "%sbytes_pack_a += (MC * KC * %f);\n"%(level*indent,self.floatSize)
        level-=1
        code += "%s}\n"%(level*indent)
        return code
@@ -414,6 +433,8 @@ class Gett:
 
        code = "%s{ // pack B\n"%(level*indent)
        level+=1
+       if( self.useTimings ):
+           code += "%sdouble start_ = omp_get_wtime();\n"%(level*indent)
        size_str = ""
        for s in size:
            size_str += "%d, "%s
@@ -427,6 +448,9 @@ class Gett:
            code += "%s,"%s
        code = code[:-1] + "};\n"
        code += "%s%s<%s>(&B[%s], B_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
+       if( self.useTimings ):
+           code += "%stime_pack_b += omp_get_wtime() - start_;\n"%(level*indent)
+           code += "%sbytes_pack_b += (NC * KC * %f);\n"%(level*indent,self.floatSize)
        level-=1
        code += "%s}\n"%(level*indent)
        return code
@@ -564,6 +588,11 @@ class Gett:
 
         if( self.useDynamicMemory ):
             code += "%sdelete[] L2;\n"%(indent)
+        if( self.useTimings ):
+            code += "%sdouble total_time = omp_get_wtime() - time_start_;\n"%indent
+            code += "%sprintf(\"Packing A: %%f sec (%%.2f %%%%), %%f GiB/s.\\n\", time_pack_a, time_pack_a / total_time * 100, bytes_pack_a / 1024. /1024. / 1024. / time_pack_a);\n"%indent
+            code += "%sprintf(\"Packing B: %%f sec (%%.2f %%%%), %%f GiB/s.\\n\", time_pack_b, time_pack_b / total_time * 100, bytes_pack_b / 1024. /1024. / 1024. / time_pack_b);\n"%indent
+            #code += "%sprintf(\"Packing C: %%f sec (%%.2f %%%%), %%f GiB/s.\\n\", time_pack_c, time_pack_c / total_time * 100, bytes_pack_c / 1024. /1024. / 1024. / time_pack_c);\n"%indent
         code += "} //gett\n"
 
         return code
@@ -740,6 +769,7 @@ class Gett:
                for key in estimatedGflops:
                    sortedEstimatedGflops.append(estimatedGflops[key])
                sortedEstimatedGflops.sort(reverse=True)
+               print "Total amount of GETT implementations: %d"%len(sortedEstimatedGflops)
 
            for variant_id in range(len(self.gemmVariants)):
                variant = self.gemmVariants[variant_id]
@@ -879,6 +909,11 @@ class Gett:
                                                    ########################################
                                                    # generate Transpositions using TTC
                                                    ########################################
+                                                   if( Ahat.countContiguousStrideOneElements() < self.arch.cacheLineSize ):
+                                                       # We only test the non-packed tensor because the size of the _entire_ 
+                                                       # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
+                                                       print WARNING + "WARNING: packing of A will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Ahat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
+                                                       print "    "+ str(Ahat) + " -> " + str(Atilde) + ENDC
                                                    (transposeNameA, bandwidthA, permA, sizeA, lda, ldaOut) = generateTranspose(Ahat,
                                                            Atilde,
                                                            self.floatType, 1.0,
@@ -886,12 +921,22 @@ class Gett:
                                                            0, 1, 0,
                                                            self.arch.architectureName,
                                                            self.generateOnly, 0)
+                                                   if( Bhat.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
+                                                       # We only test the non-packed tensor because the size of the _entire_ 
+                                                       # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
+                                                       print WARNING + "WARNING: packing of B will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Bhat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
+                                                       print "    "+ str(Bhat) + " -> " + str(Btilde) + ENDC
                                                    (transposeNameB, bandwidthB, permB, sizeB, ldb, ldbOut) = generateTranspose(Bhat,
                                                            Btilde,
                                                            self.floatType, 1.0,
                                                            0.0, self.numThreads,
                                                            0, 1, 0,
                                                            self.arch.architectureName,self.generateOnly, 0)
+                                                   if( ChatMicro.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
+                                                       # We only test the non-packed tensor because the size of the _entire_ 
+                                                       # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
+                                                       print WARNING + "WARNING: packing of C will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(ChatMicro.countContiguousStrideOneElements(), self.arch.cacheLineSize)
+                                                       print "    " + str(microTileC) + " -> " + str(ChatMicro) + ENDC
                                                    (transposeNameC, bandwidthC, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
                                                            ChatMicro,
                                                            self.floatType,
@@ -915,6 +960,8 @@ class Gett:
                                                    code += "#include <immintrin.h>\n"
                                                    code += "#include <stdlib.h>\n"
                                                    code += "#include <stdio.h>\n"
+                                                   if( self.useTimings ):
+                                                       code += "#include <omp.h>\n"
 
                                                    code += "#define MR (%d)\n"%mr
                                                    code += "#define NR (%d)\n"%nr
@@ -924,6 +971,14 @@ class Gett:
                                                    code += "#define NC (%d)\n"%nc
                                                    code += "#define KC (%d)\n"%kc
                                                    code += "\n"
+
+                                                   if( self.useTimings ):
+                                                       code += "static double time_pack_a;\n"
+                                                       code += "static double bytes_pack_a;\n"
+                                                       code += "static double time_pack_b;\n"
+                                                       code += "static double bytes_pack_b;\n"
+                                                       code += "static double time_pack_c;\n"
+                                                       code += "static double bytes_pack_c;\n"
 
                                                    ###############################
                                                    # emit micro kernels

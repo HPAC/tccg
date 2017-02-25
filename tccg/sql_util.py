@@ -153,6 +153,22 @@ def insertIntoGETT(cursor, variant,
     primaryKey = getLastPrimaryKey(cursor)
     return primaryKey
 
+def insertIntoGEMM(cursor, measurement_id, flops):
+    command = """INSERT INTO gemm(
+                          measurement_id, flops)
+                VALUES ( 
+                %d, 
+                %f
+                );"""%( measurement_id, flops)
+    try:
+        cursor.execute(command)
+    except sqlite3.Error as e:
+        print FAIL + "[TCC] ERROR (sql):", e.args[0], command, ENDC
+        traceback.print_exc()   
+        exit(-1)
+    primaryKey = getLastPrimaryKey(cursor)
+    return primaryKey
+
 
 def insertIntoTTGT(cursor, measurement_id, flops):
     command = """INSERT INTO ttgt(
@@ -320,6 +336,22 @@ def createTables(cursor):
         print FAIL + "[TCC] ERROR (sql):", e.args[0], command, ENDC
         traceback.print_exc()   
         exit(-1)
+
+    command = """
+    CREATE TABLE IF NOT EXISTS 'gemm' (
+      'gemm_id' INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT ,
+      'flops' FLOAT NULL, 
+      'measurement_id' INTEGER NULL ,
+      FOREIGN KEY ('measurement_id') REFERENCES 'measurements' ('measurement_id')
+      )
+    """
+    try:
+        cursor.execute(command)
+    except sqlite3.Error as e:
+        print FAIL + "[TCC] ERROR (sql):", e.args[0], command, ENDC
+        traceback.print_exc()   
+        exit(-1)
+
 
     command = """
     CREATE TABLE IF NOT EXISTS 'gett' (

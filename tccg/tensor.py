@@ -17,6 +17,15 @@ class Tensor:
             if indices[i] != self.indices[i]:
                 return 1
 
+    def countContiguousStrideOneElements(self):
+        count = self.indices[0].size
+        for i in range(1, len(self.indices)):
+            if( self.ld[i] == count ):
+                count *= self.indices[i].size
+            else: # break if the indices are not contiguous anymore
+                break
+        return count
+
     def getDim(self):
         return len(self.indices)
 
@@ -211,11 +220,16 @@ class Tensor:
             else:
                 return ret
 
+    def getOffsetIdx(self, idx, fixedSize = 1):
+        offset = self.getOffset([idx],fixedSize)
+        offset = offset.replace("%s * "%idx.label, "")
+        return offset
+
     def __str__(self, clean = 1):
         string = "%s"%self.label
         string += "("
         for idx in self.indices:
-            string += idx.label
+            string += str(idx)
             string += ","
         string = string[:-1]
         string += ")"

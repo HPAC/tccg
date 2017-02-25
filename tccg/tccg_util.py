@@ -12,25 +12,37 @@ FAIL = '\033[91m'
 WARNING = '\033[93m'
 ENDC = '\033[0m'
   
-def getBatchedGemmFunctionName( floatType, arch ):
+def getBatchedGemmFunctionName( floatType, arch, useStridedBatchedGemm ):
     if( floatType == "float" ):
         if( arch == "cuda" ):
-            return "cublasSgemmBatched"
+            if( useStridedBatchedGemm ):
+                return "cublasSgemmStridedBatched"
+            else:
+                return "cublasSgemmBatched"
         else:
             return "sgemm_batch"
     elif( floatType == "double" ):
         if( arch == "cuda" ):
-            return "cublasDgemmBatched"
+            if( useStridedBatchedGemm ):
+                return "cublasDgemmStridedBatched"
+            else:
+                return "cublasDgemmBatched"
         else:
             return "dgemm_batch"
     elif( floatType == "float complex" ):
         if( arch == "cuda" ):
-            return "cublasCgemmBatched"
+            if( useStridedBatchedGemm ):
+                return "cublasCgemmStridedBatched"
+            else:
+                return "cublasCgemmBatched"
         else:
             return "cgemm_batch"
     elif( floatType == "double complex" ):
         if( arch == "cuda" ):
-            return "cublasZgemmBatched"
+            if( useStridedBatchedGemm ):
+                return "cublasZgemmStridedBatched"
+            else:
+                return "cublasZgemmBatched"
         else:
             return "zgemm_batch"
     else:
@@ -108,7 +120,7 @@ def getCompilerVersion(compiler):
         proc = subprocess.Popen([comp, version],stdout=subprocess.PIPE)
         proc.wait()
     except:
-        print "ERROR: some error has occured. Does the selected compiler (%s) exist?"%comp
+        print FAIL + "ERROR: some error has occured. Does the selected compiler (%s) exist?"%comp + ENDC
         exit(-1)
 
     output = proc.communicate()[0].split("\n")
@@ -293,6 +305,28 @@ def getNindices(A, B, C):
             indices.append(idxB)
     return indices
 
+def setMinus( listA, minusSet ):
+    minus= []
+    for item in listA:
+        if( not hasItem( minusSet, item ) ):
+            minus.append(item)
+    return minus
+
+def concatenate( listA, listB ):
+    concat = []
+    for item in listA:
+        concat.append(item)
+    for item in listB:
+        if( not hasItem( concat, item) ):
+            concat.append(item)
+    return concat
+
+def intersect( listA, listB ):
+    intersection = []
+    for itemA in listA:
+        if( hasItem( listB, itemA) ):
+            intersection.append(itemA)
+    return intersection
 
 #get all indices that are in A _and_ C but not in B
 def getMindices(A, B, C):
@@ -450,7 +484,7 @@ def countRequiredSplits(subset, superset):
 # such that Size(I_1) = size and Size(I_2) = Size(I) / size.
 # Note that I_1 may not just be a subset of I but it might be required to
 # split some indices of I to achieve the constraint Size(I_1) = size. Hence,
-# I = I_1 \union I_2 just rambles the rough idea of what's actually happening.
+# I = I_1 \union I_2 just resambles the rough idea of what's actually happening.
 def splitIndexSet(indices, size, tensorA, tensorB):
 
     primsMC = getPrimeFactors(size)
@@ -481,7 +515,7 @@ def splitIndexSet(indices, size, tensorA, tensorB):
     # remove all candidates that are not valid (i.e., those which would require a non-unite stride for the packing)
     for candidate in candidates: 
         if(( not hasItem(indices, tensorA.indices[0]) or hasItem(candidate, tensorA.indices[0])) and 
-          ( not hasItem(indices, tensorB.indices[0]) or hasItem(candidate, tensorB.indices[0]) ) ):
+           ( not hasItem(indices, tensorB.indices[0]) or hasItem(candidate, tensorB.indices[0])) ):
             validCandidates.append(candidate)
 
     # 3) select good candidates

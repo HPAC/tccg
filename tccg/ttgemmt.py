@@ -15,6 +15,9 @@ class TTGEMMT:
         self.arch = arch
         self.A = A
         self.B = B
+        if( not A.hasIndex(C.indices[0]) ): #adhere to the definition of mInd and nInd
+           self.A = B
+           self.B = A
         self.C = C
         self.alpha = alpha
         self.beta = beta 
@@ -23,6 +26,7 @@ class TTGEMMT:
         self.floatType = floatType
         self.useAsGEMMName = getGemmFunctionName(floatType, floatType)
 
+        self.candidates = {}
         self.numImpl = 0
         self.useAsGEMM = gemm
 
@@ -79,33 +83,46 @@ class TTGEMMT:
            self.sizeK_var += idx.label + "_upper * "
         self.sizeK_var = self.sizeK_var[:-3]
 
-    def skipCandidate(self, currentTransposeTime, transpositions, opA, opB):
-        if( self.numImpl >= 1 ):
-            return True
+    def numCandidates(self):
+        return len(self.candidates)
 
+    def selectBestCandidate(self, transpositions):
         # get minimum cost among all candidates
         minTransposeTime = 1e100
         for candidate in transpositions:
             minTransposeTime = min(minTransposeTime , transpositions[candidate])
 
-        if( currentTransposeTime == minTransposeTime ):
-            hasNTcandidate = 0
-            for candidate in transpositions:
-                if( transpositions[candidate] == minTransposeTime and candidate[-2:] == "NT"):
-                    hasNTcandidate = 1
-                    break
+        goodCandidates = []
+        for candidate in transpositions:
+            if( transpositions[candidate] == minTransposeTime ):
+                goodCandidates.append(candidate)
 
-            # prefer NT GEMMs
-            if( hasNTcandidate ):
-                if( opA == "N" and opB == "T" ):
-                    return False
-                else:
-                    return True
-            else:
-                return False
+        bestCandidate = goodCandidates[0]
+        goodCandidatesStr = ""
+        for candidate in goodCandidates:
+                goodCandidatesStr += candidate + ", "
+        return goodCandidatesStr[0:-2]
 
-        else:
+
+    def skipCandidate(self, candidate, transpositions):
+        return False # TODO
+        if( candidate != self.selectBestCandidate( transpositions ) ):
             return True
+        else:
+            return False
+
+    def getCandidateName(self, mIndices, nIndices, kIndices, swapAB, opA, opB):
+        candidate = ""
+        for idx in mIndices:
+            candidate += idx.label
+        candidate += "_"
+        for idx in nIndices:
+            candidate += idx.label
+        candidate += "_"
+        for idx in kIndices:
+            candidate += idx.label
+        candidate += "_"+str(swapAB)+opA+opB # it is important that opA and opB are the last two symbols!!!
+        return candidate
 
 #we assume that indices have been fused beforehand
     def genCode(self, maxWorkspaceLimit):
@@ -116,6 +133,7 @@ class TTGEMMT:
             code = "#include \"ttgemmt.hpp\"\n"
         else:
             code = "#include \"gemm.hpp\"\n"
+        code += "#include <stdlib.h>\n"
         codeHpp = ""
         if( self.arch.architectureName  == "cuda" ):
             code += "#include <cublas_v2.h>\n"
@@ -133,6 +151,9 @@ void %s(const char *transa, const char *transb,
         transpositions = {}
         for estimate_or_generate in [0,1]: # if estimate_or_generate == 0 : estimate performance
                                            # if estimate_or_generate == 1 : generate code for the best x implementations
+            if( estimate_or_generate ):
+                print "Total amount of TTGT implementations: %d"%len(transpositions)
+                print "Best TTGT candidates: %s"%self.selectBestCandidate(transpositions)
             self.numImpl = 0
             maxWork = 0
             #all these permutations are valid
@@ -147,20 +168,21 @@ void %s(const char *transa, const char *transb,
                         B = self.B
                         mIndices_ = mIndices
                         nIndices_ = nIndices
-                        if( not A.hasIndex(C.indices[0]) ): #adhere to the definition of mInd and nInd
-                           A = self.B
-                           B = self.A
+                        sizeM_var_ =  self.sizeM_var
+                        sizeN_var_ =  self.sizeN_var
                         for swapAB in [0,1]:
                             if( swapAB ):
                                 A = self.B
                                 B = self.A
                                 mIndices_ = nIndices
                                 nIndices_ = mIndices
+                                sizeM_var_ =  self.sizeN_var
+                                sizeN_var_ =  self.sizeM_var
 
                             indicesC = mIndices_ + nIndices_
                             for opA in ["N","T"]:
                                 if( opA == "N" ):
-                                    lda = self.sizeM_var
+                                    lda = sizeM_var_
                                     indicesA = mIndices_ + kIndices
                                 else:
                                     lda = self.sizeK_var
@@ -170,21 +192,25 @@ void %s(const char *transa, const char *transb,
                                         ldb = self.sizeK_var
                                         indicesB = kIndices + nIndices_
                                     else:
-                                        ldb = self.sizeN_var
+                                        ldb = sizeN_var_
                                         indicesB = nIndices_ + kIndices
+
+                                    candidateName = self.getCandidateName(mIndices_, nIndices_, kIndices,swapAB, opA, opB)
+                                    self.candidates[candidateName] = candidateName
+
                                     ##########################################
                                     # generate NT case
                                     ##########################################
                                     if( self.useAsGEMM == 0 ):
                                         if( self.arch.architectureName  == "cuda" ):
-                                            header = "void ttgemmt_%d(cublasHandle_t cublas_handle, const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(self.numImpl,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
+                                            header = "int ttgemmt_%s(cublasHandle_t cublas_handle, const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(candidateName,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
                                         else:
-                                            header = "void ttgemmt_%d(const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(self.numImpl,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
+                                            header = "int ttgemmt_%s(const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(candidateName,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
                                     else:
                                         if( self.arch.architectureName  == "cuda" ):
-                                            header = "void gemm_%d(cublasHandle_t cublas_handle, const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(self.numImpl,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
+                                            header = "int gemm_%s(cublasHandle_t cublas_handle, const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(candidateName,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
                                         else:
-                                            header = "void gemm_%d(const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(self.numImpl,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
+                                            header = "int gemm_%s(const %s *A, const %s *B, %s *C, %s alpha, %s beta, %s *work_)"%(candidateName,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
                                     codeblocks = [] #stores all the building blocks (e.g., transpose, gemm)
                                     tmpA = A
                                     tmpB = B
@@ -229,19 +255,9 @@ void %s(const char *transa, const char *transb,
                                         gemm.setBeta("beta")
                                         gemm.renameOutput(self.C.label)
 
-                                    candidate = ""
-                                    for idx in mIndices_:
-                                        candidate += str(idx)
-                                    candidate += "_"
-                                    for idx in nIndices_:
-                                        candidate += str(idx)
-                                    candidate += "_"
-                                    for idx in kIndices:
-                                        candidate += str(idx)
-                                    candidate += "_"+str(swapAB)+opA+opB # it is important that opA and opB are the last two symbols!!!
-                                    transpositions[candidate] = transposeTime
-                                    if( estimate_or_generate == 0 or
-                                            self.skipCandidate(transposeTime, transpositions, opA, opB) ): 
+                                    
+                                    transpositions[candidateName] = transposeTime
+                                    if( estimate_or_generate == 0 or self.skipCandidate(candidateName, transpositions) ): 
                                         continue
 
                                     # Allocate working memory
@@ -262,24 +278,22 @@ void %s(const char *transa, const char *transb,
                                            code = include + code
                                            implementation += cpp
                                        except:
-                                           print "ERROR in TTGT:",A, "->",tmpA, B, "->",tmpB,C, candidate
+                                           print "ERROR in TTGT:",A, "->",tmpA, B, "->",tmpB,C, candidateName
                                            traceback.print_stack()   
                                            exit(-1)
 
                                     workspaceCode = "   //REQUIRED WORKSPACE: %d bytes\n"%workspace
-                                    workspaceCode += "   if( work_ != 0 && (*work_) == -1 )\n"
-                                    workspaceCode += "   {\n"
-                                    workspaceCode += "      *work_ = %d;\n"%workspace
-                                    workspaceCode += "      return;\n"
-                                    workspaceCode += "   }\n"
+                                    workspaceCode += "   if( work_ == NULL )\n"
+                                    workspaceCode += "      return %d;\n"%workspace
                                     implementation = header + "\n{\n" + workspaceCode + tmpCode + implementation
+                                    implementation += "   return 0;\n"
                                     implementation += "}\n"
                                     self.numImpl += 1
                                     if( self.useAsGEMM == 0 ):
-                                        print "%d ttgt-based versions generated so far.                                 "%self.numImpl
+                                        print "%d ttgt-based versions generated so far: %s.                                 "%(self.numImpl, candidateName)
                                     else:
-                                        print "%d gemm-based versions generated so far.                                 "%self.numImpl
-                                    code += implementation
+                                        print "%d gemm-based versions generated so far: %s.                                 "%(self.numImpl, candidateName)
+                                    code += "//candidate: %s\n"%candidateName + implementation
                                     codeHpp += header + ";\n"
 
                                     # determine maximum workspace across all implementations

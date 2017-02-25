@@ -1,6 +1,7 @@
 *.pyc
 *.swp
 benchmark/*.cpp
+benchmark/*.c
 benchmark/*.tccg
 benchmark/*.m
 benchmark/*.sh

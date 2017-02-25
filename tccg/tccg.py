@@ -35,11 +35,13 @@ class TccgArgs:
         self.gettOnly = 0
         self.maxWorkspace = 10000000   #in GB
         self.ignoreDatabase = 0
+        self.useTimings = 0
         self.maxImplementations = 16
         self.compiler = "icpc"
         self.blasLib = "-mkl"
         self.cudaLib = "-L${CUDA_ROOT}/lib64 -lcublas"
         self.cudaInclude = "-I${CUDA_ROOT}/include"
+        self.cudaArch= "CUDA_ARCH=-arch=sm_30"
         self.database = "tccg.db"
         self.affinity = "compact,1"
         self.verbose = 0
@@ -113,7 +115,6 @@ class Tccg:
         else:
             print "[GETT] Error: architecture unknown"
             exit(-1)
-        self.generateGEMMreference = 1
         self.ttgemmt = TTGEMMT(self.A, self.B, self.C, self.alpha, self.beta,
                 self.args.numThreads, arch, self.floatType, 0, self.args.generateOnly)
         self.gemm = TTGEMMT(self.A, self.B, self.C, self.alpha, self.beta,
@@ -121,7 +122,7 @@ class Tccg:
         self.gett = Gett(self.A, self.B, self.C, self.alpha, self.beta,
                 self.args.numThreads, arch, self.floatType,
                 self.args.maxImplementations, self.args.useDynamicMemory,
-                self.args.fastMeasurements, self.args.generateOnly )
+                self.args.fastMeasurements, self.args.generateOnly, self.args.useTimings )
         self.gemmLoop = GemmLoop(self.A, self.B, self.C, self.alpha, self.beta,
                 self.args.numThreads, self.floatType, arch, self.args.batchedGEMM)
 
@@ -227,10 +228,13 @@ class Tccg:
         ###########################################
         workspace = 0
         if( not self.args.gettOnly ):
-            workspace = self.ttgemmt.genCode(self.args.maxWorkspace)
-            self.gemmLoop.genCode()
-        self.gett.genCode()
-        if( self.generateGEMMreference ):
+            if( not self.args.noTTGT ):
+                workspace = self.ttgemmt.genCode(self.args.maxWorkspace)
+            if( not self.args.noLoG ):
+                self.gemmLoop.genCode()
+        if( not self.args.noGETT ):
+            self.gett.genCode()
+        if( not self.args.noGEMM ):
             self.gemm.genCode(self.args.maxWorkspace)
 
         self.printMain(workspace)
@@ -247,6 +251,7 @@ class Tccg:
         fw.write("BLAS_LIB=%s"%self.args.blasLib)
         fw.write("CUDA_LIB=%s"%self.args.cudaLib)
         fw.write("CUDA_INCLUDE=%s"%self.args.cudaInclude)
+        fw.write("%s"%self.args.cudaArch)
         for l in fr:
             fw.write(l)
         fw.close()
@@ -286,10 +291,10 @@ class Tccg:
         ###########################################
         failCount = 0
         referenceFlops = -1
-        gemmFlops = -1
         gettVersions = {}
         gettVersionsEstimated = {}
         ttgtVersions = {}
+        gemmVersions = {}
         loopVersions = {}
         for line in proc.stdout:
             Line = line
@@ -300,8 +305,8 @@ class Tccg:
                     flops = line.split(":")[1]
                     flops = float(flops.split(" ")[1])
                 except :      
-                    print "231 error: ", line
-                    exit(-1)
+                    print "some error has occurred: ", line
+                    continue
                 
                 if( implementationType == "reference" ):
                     referenceFlops = flops
@@ -315,9 +320,10 @@ class Tccg:
                 elif( implementationType.startswith("ttgemmt") ):
                     ttgtVersions[implementationType] = flops
                 elif( implementationType.startswith("gemm") ):
-                    gemmFlops = flops
+                    gemmVersions[implementationType] = flops
                 else:
-                    tccg_util.tccError("unknown implementation."+ implementationType )
+                    if( not implementationType.startswith("packing") ):
+                        tccg_util.tccError("unknown implementation."+ implementationType )
 
             if( line.find("tcc_end") != -1):
                 break
@@ -349,7 +355,7 @@ class Tccg:
                           self.args.floatTypeB,
                           self.args.floatTypeC,
                           referenceFlops,
-                          gemmFlops,
+                          0,
                           self.beta)
 
         maxFlopsLoop = 0
@@ -362,8 +368,16 @@ class Tccg:
         print "Best loop-based implementation (%s) attained: %.2f GFLOPS/s"%(bestLoopVersion, maxFlopsLoop)
             
 
-        if( self.generateGEMMreference == 1):
-            print "Best GEMM-based implementation () attained: %.2f GFLOPS/s"%(gemmFlops)
+        maxFlopsGEMM = 0
+        if( not self.args.noGEMM == 1):
+            bestGEMMVersion = ""
+            for GEMMVersion in gemmVersions:
+                sql_util.insertIntoGEMM(cursor, measurement_id, gemmVersions[GEMMVersion])
+                if( maxFlopsGEMM < gemmVersions[GEMMVersion]):
+                    maxFlopsGEMM = gemmVersions[GEMMVersion]
+                    bestGEMMVersion = GEMMVersion
+            print "Best GEMM-based implementation (%s) attained: %.2f GFLOPS/s"%(bestGEMMVersion, maxFlopsGEMM)
+
 
 
         maxFlopsttgt = 0
@@ -400,7 +414,7 @@ class Tccg:
 
         self.emitFinalCode(maxFlopsGETT, maxFlopsLoop, maxFlopsttgt, bestKey)
         print "Best gett-based implementation (%s) attained: %.2f GFLOPS/s"%(bestGETTVersion, maxFlopsGETT)
-        print "Best Loop/TTGT/GETT/reference/GEMM: %.2f / %.2f / %.2f / %.2f / %.2f GFLOPS"%(maxFlopsLoop, maxFlopsttgt, maxFlopsGETT,referenceFlops, gemmFlops)
+        print "Best Loop/TTGT/GETT/reference/GEMM: %.2f / %.2f / %.2f / %.2f / %.2f GFLOPS"%(maxFlopsLoop, maxFlopsttgt, maxFlopsGETT,referenceFlops, maxFlopsGEMM)
 
         # commit changes to database
         connection.commit()
@@ -706,11 +720,11 @@ class Tccg:
        code = ""
        if( self.gett.numImpl > 0 ):
            code += "#include \"gett.hpp\"\n"
-       if( self.gemmLoop.numImpl > 0 ):
+       if( self.gemmLoop.numCandidates() > 0 ):
            code += "#include \"loopOverGemm.hpp\"\n"
-       if( self.ttgemmt.numImpl > 0 ):
+       if( self.ttgemmt.numCandidates() > 0 ):
            code += "#include \"ttgemmt.hpp\"\n"
-       if( self.gemm.numImpl > 0 ):
+       if( self.gemm.numCandidates() > 0 ):
            code += "#include \"gemm.hpp\"\n"
        if( self.args.architecture  == "cuda"):
            code += "#include <cuda_runtime.h>\n"
@@ -718,6 +732,7 @@ class Tccg:
        code += "#include <time.h>\n"
        code += "#include <omp.h>\n"
        code += "#include <stdlib.h>\n"
+       code += "#include <unistd.h>\n"
        code += "#include <stdio.h>\n"
        code += "#include <float.h>\n"
        code += "\n"
@@ -769,7 +784,7 @@ class Tccg:
            code +="        if(relError > 1e-4){\n"
        else:
            code +="        if(relError > 1e-9){\n"
-       code +="            printf(\"i: %l relError: %.8e\\n\",i,relError);\n"
+       code +="            //printf(\"i: %l relError: %.8e\\n\",i,relError);\n"
        code +="            error += 1;\n"
        code +="            return 0;\n"
        code +="         }\n"
@@ -851,8 +866,25 @@ class Tccg:
 
        indent = "   "
        level = 1
-       code += "   int nRepeat = 3;\n"
+       code += "   int mRepeat = 3;\n"
+       code += "   int nRepeat = 4;\n"
+
+       code += "   double ttgemmt_time[%d];\n"%self.ttgemmt.numCandidates()
+       code += "   double gemm_time[%d];\n"%self.gemm.numCandidates()
+       code += "   double loopGemm_time[%d];\n"%self.gemmLoop.numCandidates()
+       code += "   double gett_time[%d];\n"%self.gett.numImpl
+
+       code += "   for(int l = 0; l < %d; l++)\n"%self.gett.numImpl
+       code += "      gett_time[l] = FLT_MAX;\n"
+       code += "   for(int l = 0; l < %d; l++)\n"%self.ttgemmt.numCandidates()
+       code += "      ttgemmt_time[l] = FLT_MAX;\n"
+       code += "   for(int l = 0; l < %d; l++)\n"%self.gemmLoop.numCandidates()
+       code += "      loopGemm_time[l] = FLT_MAX;\n"
+       code += "   for(int l = 0; l < %d; l++)\n"%self.gemm.numCandidates()
+       code += "      gemm_time[l] = FLT_MAX;\n"
+
        code += "   const double flops = %e;\n"%self.getFlopCount()
+       code += "   for(int r = 0; r < nRepeat; r++){\n"
        ############################
        # REFERENCE version
        ############################
@@ -866,19 +898,19 @@ class Tccg:
            code += "      double tmp = omp_get_wtime() - start;\n"
            code += "      ref_time = (tmp < ref_time) ? tmp : ref_time;\n"
            code += "  }\n"
+           code += "  if( r == (mRepeat-1) )\n"
            code += "   printf(\"reference: %.2f GFLOPS\\n\", flops / 1e9 / ref_time );\n"
            code += "\n"
 
        ############################
        # GETT version
        ############################
-       code += "   double gett_time[%d];\n"%self.gett.numImpl
        code += "   //launch gett kernels\n"
        count = 0
        for key in self.gett.implementations:
            for (variant, estimatedGflops) in self.gett.implementations[key]:
                code += "   {\n"
-               code += "      gett_time[%d] = FLT_MAX;\n"%count
+               code += "      int success = 1;\n"
                code += "      for(int i = 0; i < nRepeat; i++){\n"
                code += "         restore(C_copy, C, %s);\n"%sizeC
                code += "         trashCache(trash1, trash2, largerThanL3);\n"
@@ -889,25 +921,29 @@ class Tccg:
                code += "   \n"
                if( self.args.testing == 1 and self.gett.fastMeasurements != 1):
                    code += "         if( i==0 )\n"
-                   code += "            if( equal(C_ref, C, %s) != 1 )\n"%sizeC
+                   code += "            if( equal(C_ref, C, %s) != 1 ){\n"%sizeC
                    code += "               printf(\"ERROR: version '%s' failed\\n\");\n"%variant
+                   code += "               success = 0;\n"
+                   code += "               break;\n"
+                   code += "            }\n"
                code += "      }\n"
-               code += "   }\n"
+               code += "   if( success && r == (mRepeat-1) )\n"
                if( self.gett.fastMeasurements ):
                    code += "   printf(\"%s: %%.2f GFLOPS // estimated: %.2f GFLOPS\\n\", %e / 1e9 / gett_time[%d]);\n"%(variant, estimatedGflops, self.gett.getFastFlopsFromGettName(variant), count)
                else:
                    code += "   printf(\"%s: %%.2f GFLOPS // estimated: %.2f GFLOPS\\n\", flops / 1e9 / gett_time[%d]);\n"%(variant, estimatedGflops, count)
+               code += "   }\n"
                count += 1
        code += "\n"
        
        ############################
-       # Loop-over Gemm version
+       # Loop-over-GEMM version
        ############################
-       code += "   double loopGemm_time[%d];\n"%self.gemmLoop.numImpl
        code += "   //launch loop-gemm kernels\n"
-       for i in range(self.gemmLoop.numImpl):
+       count = 0
+       for candidate in self.gemmLoop.candidates:
            code += "  {\n"
-           code += "   loopGemm_time[%d] = FLT_MAX;\n"%i
+           code += "   int success = 1;\n"
            code += "   for(int i = 0; i < nRepeat; i++){\n"
            code += "      restore(C_copy, C, %s);\n"%sizeC
            code += "      trashCache(trash1, trash2, largerThanL3);\n"
@@ -915,32 +951,41 @@ class Tccg:
                code +="      cudaMemcpy(C_d, C, sizeof(%s) * %s, cudaMemcpyHostToDevice);\n"%(self.floatType,sizeC)
            code += "      double start = omp_get_wtime();\n"
            if( self.args.architecture == "cuda"):
-               code += "      gemmLoop_%d(cublas_handle, A_d, B_d, C_d, alpha, beta);\n"%i
+               code += "      int ret = %s(cublas_handle, A_d, B_d, C_d, alpha, beta);\n"%candidate
                code += "      cudaDeviceSynchronize();\n"
+               code += "      if( ret != 0 || cudaSuccess != cudaGetLastError()) { \n"
+               code += "            printf(\"ERROR: version 'loopGemm_%s' failed\\n\");\n"%candidate
+               code += "            success = 0;\n"
+               code += "            break;\n"
+               code += "      }\n"
            else:
-               code += "      gemmLoop_%d(A, B, C, alpha, beta);\n"%i
+               code += "      %s(A, B, C, alpha, beta);\n"%candidate
            code += "      double tmp = omp_get_wtime() - start;\n"
-           code += "      loopGemm_time[%d] = (tmp < loopGemm_time[%d]) ? tmp : loopGemm_time[%d];\n"%(i,i,i)
+           code += "      loopGemm_time[%d] = (tmp < loopGemm_time[%d]) ? tmp : loopGemm_time[%d];\n"%(count,count,count)
            if( self.args.testing == 1):
                code += "\n"
                code += "      if( i==0 ){\n"
                if( self.args.architecture == "cuda"):
                    code +="         cudaMemcpy(C, C_d, sizeof(%s) * %s, cudaMemcpyDeviceToHost);\n"%(self.floatType,sizeC)
-               code += "         if( equal(C_ref, C, %s) != 1 )\n"%sizeC
-               code += "            printf(\"ERROR: version 'loopGemm_%d' failed\\n\");\n"%i
+               code += "         if( equal(C_ref, C, %s) != 1 ){\n"%sizeC
+               code += "            printf(\"ERROR: version 'loopGemm_%s' failed\\n\");\n"%candidate
+               code += "            success = 0;\n"
+               code += "         }\n"
                code += "      }\n"
            code += "     }\n"
+           code += "   if( success  && r == (mRepeat-1))\n"
+           code += "     printf(\"loopGemm_%s: %%.2f GFLOPS\\n\", flops / 1e9 / loopGemm_time[%d]);\n"%(candidate,count)
            code += "  }\n"
-           code += "   printf(\"loopGemm_%d: %%.2f GFLOPS\\n\", flops / 1e9 / loopGemm_time[%d]);\n"%(i,i)
+           count+= 1
 
        ############################
        # GEMM version
        ############################
-       code += "   double gemm_time[%d];\n"%self.gemm.numImpl
        code += "   //launch gemm kernels\n"
-       for i in range(self.gemm.numImpl):
+       count = 0
+       for candidate in self.ttgemmt.candidates:
            code += "  {\n"
-           code += "   gemm_time[%d] = FLT_MAX;\n"%i
+           code += "   int success = 1;\n"
            code += "   for(int i = 0; i < nRepeat; i++){\n"
            code += "      restore(C_copy, C, %s);\n"%sizeC
            code += "      trashCache(trash1, trash2, largerThanL3);\n"
@@ -948,25 +993,32 @@ class Tccg:
                code +="      cudaMemcpy(C_d, C, sizeof(%s) * %s, cudaMemcpyHostToDevice);\n"%(self.floatType,sizeC)
            code += "      double start = omp_get_wtime();\n"
            if( self.args.architecture == "cuda"):
-               code += "      gemm_%d(cublas_handle, A_d, B_d, C_d, alpha, beta, work_d);\n"%i
+               code += "      int ret = gemm_%s(cublas_handle, A_d, B_d, C_d, alpha, beta, work_d);\n"%candidate
                code += "      cudaDeviceSynchronize();\n"
+               code += "      if( ret != 0 || cudaSuccess != cudaGetLastError() ) { \n"
+               code += "            printf(\"ERROR: version 'gemm_%s' failed\\n\");\n"%candidate
+               code += "            success = 0;\n"
+               code += "            break;\n"
+               code += "      }\n"
            else:
-               code += "      gemm_%d(A, B, C, alpha, beta, work_);\n"%i
+               code += "      gemm_%s(A, B, C, alpha, beta, work_);\n"%candidate
            code += "      double tmp = omp_get_wtime() - start;\n"
-           code += "      gemm_time[%d] = (tmp < gemm_time[%d]) ? tmp : gemm_time[%d];\n"%(i,i,i)
+           code += "      gemm_time[%d] = (tmp < gemm_time[%d]) ? tmp : gemm_time[%d];\n"%(count, count, count)
            code += "   }\n"
+           code += "   if( success  && r == (mRepeat-1))\n"
+           code += "     printf(\"gemm_%s: %%.2f GFLOPS\\n\", flops / 1e9 / gemm_time[%d]);\n"%(candidate,count)
            code += "  }\n"
-           code += "   printf(\"gemm_%d: %%.2f GFLOPS\\n\", flops / 1e9 / gemm_time[%d]);\n"%(i,i)
+           count += 1
 
 
        ############################
        # TTGEMMT version
        ############################
-       code += "   double ttgemmt_time[%d];\n"%self.ttgemmt.numImpl
        code += "   //launch ttgemmt kernels\n"
-       for i in range(self.ttgemmt.numImpl):
+       count = 0
+       for candidate in self.ttgemmt.candidates:
            code += "  {\n"
-           code += "   ttgemmt_time[%d] = FLT_MAX;\n"%i
+           code += "   int success = 1;\n"
            code += "   for(int i = 0; i < nRepeat; i++){\n"
            code += "      restore(C_copy, C, %s);\n"%sizeC
            code += "      trashCache(trash1, trash2, largerThanL3);\n"
@@ -974,24 +1026,35 @@ class Tccg:
                code +="      cudaMemcpy(C_d, C, sizeof(%s) * %s, cudaMemcpyHostToDevice);\n"%(self.floatType,sizeC)
            code += "      double start = omp_get_wtime();\n"
            if( self.args.architecture == "cuda"):
-               code += "      ttgemmt_%d(cublas_handle, A_d, B_d, C_d, alpha, beta, work_d);\n"%i
+               code += "      int ret = ttgemmt_%s(cublas_handle, A_d, B_d, C_d, alpha, beta, work_d);\n"%candidate
                code += "      cudaDeviceSynchronize();\n"
+               code += "      if( ret != 0 || cudaSuccess != cudaGetLastError() ) { \n"
+               code += "            printf(\"ERROR: version 'ttgemmt_%s' failed\\n\");\n"%candidate
+               code += "            success = 0;\n"
+               code += "            break;\n"
+               code += "      }\n"
            else:
-               code += "      ttgemmt_%d(A, B, C, alpha, beta, work_);\n"%i
+               code += "      ttgemmt_%s(A, B, C, alpha, beta, work_);\n"%candidate
            code += "      double tmp = omp_get_wtime() - start;\n"
-           code += "      ttgemmt_time[%d] = (tmp < ttgemmt_time[%d]) ? tmp : ttgemmt_time[%d];\n"%(i,i,i)
+           code += "      ttgemmt_time[%d] = (tmp < ttgemmt_time[%d]) ? tmp : ttgemmt_time[%d];\n"%(count,count,count)
            if( self.args.testing == 1):
                code += "\n"
                code += "      if( i==0 ){\n"
                if( self.args.architecture == "cuda"):
                    code +="         cudaMemcpy(C, C_d, sizeof(%s) * %s, cudaMemcpyDeviceToHost);\n"%(self.floatType,sizeC)
-               code += "         if( equal(C_ref, C, %s) != 1 )\n"%sizeC
-               code += "            printf(\"ERROR: version 'ttgemmt_%d' failed\\n\");\n"%i
+               code += "         if( equal(C_ref, C, %s) != 1 ){\n"%sizeC
+               code += "            printf(\"ERROR: version 'ttgemmt_%s' failed\\n\");\n"%candidate
+               code += "            success = 0;\n"
+               code += "         }\n"
                code += "      }\n"
            code += "   }\n"
+           code += "   if( success  && r == (mRepeat-1))\n"
+           code += "      printf(\"ttgemmt_%s: %%.2f GFLOPS\\n\", flops / 1e9 / ttgemmt_time[%d]);\n"%(candidate,count)
            code += "  }\n"
-           code += "   printf(\"ttgemmt_%d: %%.2f GFLOPS\\n\", flops / 1e9 / ttgemmt_time[%d]);\n"%(i,i)
+           count += 1
 
+       code += "  sleep(0.5);\n"
+       code += " }\n"
        code += "\n"
        if( self.args.architecture == "cuda"):
            code += "   cudaFree(A_d);\n"
@@ -1042,7 +1105,12 @@ def main():
     parser.add_argument('--noBatchedGEMM', action="store_true", help='Disable batched GEMMs for LoG variant.')
     parser.add_argument('--generateOnly', action="store_true", help='only generate code')
     parser.add_argument('--gettOnly', action="store_true", help='Only use GETT implementation')
+    parser.add_argument('--noGETT', action="store_true", help='Do not use GETT implementation')
+    parser.add_argument('--noLoG', action="store_true", help='Do not use LoG implementation')
+    parser.add_argument('--noGEMM', action="store_true", help='Do not time equally sized GEMM')
+    parser.add_argument('--noTTGT', action="store_true", help='Do not use TTGT implementation')
     parser.add_argument('--useDynamicMemory', action="store_true", help='use dynamic memory for the small tiles. This might be required of the stack size is insufficient. However, this might degrade performance! (deactivated by default)')
+    parser.add_argument('--timePacking', action="store_true", help='times packing routines.')
     parser.add_argument('--ignoreDatabase', action="store_true", help='ignore SQL database. This prevents a database lookup for an existing solution.')
     parser.add_argument('--fastMeasurements', action="store_true", help='Significantly reduces the measuring time for GETT. This feature deactivates testing. Moreover, the attained FLOPs are just a (very good) estimate for the real flops attained by GETT.')
     parser.add_argument('--numThreads', type=int, help='number of threads.')
@@ -1117,9 +1185,14 @@ def main():
     tccgArgs.workingDir = workingDir
     tccgArgs.verbose = args.verbose
     tccgArgs.gettOnly = args.gettOnly
+    tccgArgs.noGETT = args.noGETT
+    tccgArgs.noTTGT = args.noTTGT
+    tccgArgs.noGEMM = args.noGEMM
+    tccgArgs.noLoG = args.noLoG
     tccgArgs.testing = args.testing
     tccgArgs.useDynamicMemory = args.useDynamicMemory 
     tccgArgs.ignoreDatabase = args.ignoreDatabase
+    tccgArgs.useTimings = args.timePacking
     tccgArgs.fastMeasurements = args.fastMeasurements
     tccgArgs.generateOnly = args.generateOnly 
     tccgArgs.batchedGEMM = not args.noBatchedGEMM
@@ -1148,6 +1221,7 @@ def main():
     blasLib = ""
     cudaLib = ""
     cudaInclude = ""
+    cudaArch = ""
     for l in f:
         pos = l.find("#") # remove comments
         line = l
@@ -1161,12 +1235,16 @@ def main():
             cudaLib = line.split("=")[1]
         if( line.find("CUDA_INCLUDE") != -1):
             cudaInclude = line.split("=")[1]
+        if( line.find("CUDA_ARCH") != -1):
+            cudaArch= line
     if( blasLib != "" ):
         tccgArgs.blasLib=blasLib
     if( cudaLib != "" ):
         tccgArgs.cudaLib=cudaLib
     if( cudaInclude != "" ):
         tccgArgs.cudaInclude = cudaInclude
+    if( cudaArch != "" ):
+        tccgArgs.cudaArch = cudaArch
   
     ###########################################
     # generate versions

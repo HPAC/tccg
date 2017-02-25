@@ -60,7 +60,8 @@ class GEMM:
                 opA = "CUBLAS_OP_T"
             if( self.opB == "T" ):
                 opB = "CUBLAS_OP_T"
-            code += "%s%s(cublas_handle, %s, %s, m_, n_, k_, &alpha, %s, lda_, %s, ldb_, &beta_, %s, ldc_);\n"%(indent * indentLevel, self.gemmName, opA, opB, self.A.label,self.B.label, self.OUT.label)
+            code += "%scublasStatus_t status = %s(cublas_handle, %s, %s, m_, n_, k_, &alpha, %s, lda_, %s, ldb_, &beta_, %s, ldc_);\n"%(indent * indentLevel, self.gemmName, opA, opB, self.A.label,self.B.label, self.OUT.label)
+            code += "%sif( status != CUBLAS_STATUS_SUCCESS ) return -1;\n"%(indentLevel*indent)
         else:
             code += "%s%s(\"%s\", \"%s\", &m_, &n_, &k_, &alpha, %s, &lda_, %s, &ldb_, &beta_, %s, &ldc_);\n"%(indent * indentLevel, self.gemmName, self.opA, self.opB, self.A.label,self.B.label, self.OUT.label)
         code += "   }\n"
