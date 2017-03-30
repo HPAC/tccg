@@ -2,10 +2,15 @@ import os
 import random
 import copy
 import ctf
+import libtensor
+import tblis
+import eigen 
 import argparse
 
 _tensorToolboxRoot = "PATH_TO/tensor_toolbox" #set this if tensor_toolbox is available
 _CTFRoot = "PATH_TO/CTF"
+_TBLISRoot = "/home/ps072922/.local/"
+_EigenRoot = "/home/ps072922/projects/eigen-3.3.3/"
 _tensorSize = 200. * 2**20 # Size of the largest tensor in bytes
 _dimensionMultipleStride1 = 24 # each stride-1 dimension has to be a multiple of this value
 _dimensionMultiple = 4 
@@ -243,13 +248,23 @@ def print_matlab(size,astr,bstr,cstr, dataType, f):
     f.write("gflops = %e;\n"%(flops/1e9))
     f.write("fprintf('%s-%s-%s %%f\\n',gflops/t)\n\n"%(cstr,astr,bstr))
 
-def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion,sizes = {}):
+def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatType,matlabfile,
+        stdout, benchmarkFile,benchmarkFileTBLIS,benchmarkFileEigen, useReferenceVersion,sizes = {}):
+    tblis_sh = open("tblis_"+benchmarkName+".sh","w")
+    tblis_sh.write("TBLIS_ROOT=%s\n"%_TBLISRoot)
+    eigen_sh = open("eigen_"+benchmarkName+".sh","w")
+    eigen_sh.write("EIGEN_ROOT=%s\n"%_EigenRoot)
     ctf_sh = open("ctf_"+benchmarkName+".sh","w")
     ctf_sh.write("CTF_ROOT=%s\n"%_CTFRoot)
     benchmarkFile.write("echo \"%s\"\n"%benchmarkName)
-
     benchmarkFile.write("rm -f gett_tmp.dat\n") #remove old dat files
+    benchmarkFileTBLIS.write("echo \"%s\"\n"%benchmarkName)
+    benchmarkFileTBLIS.write("rm -f gett_tmp.dat\n") #remove old dat files
+    benchmarkFileEigen.write("echo \"%s\"\n"%benchmarkName)
+    benchmarkFileEigen.write("rm -f eigen_tmp.dat\n") #remove old dat files
     ctf_sh.write("rm -f ctf_tmp.dat\n") #remove old dat files
+    tblis_sh.write("rm -f tblis_tmp.dat\n") #remove old dat files
+    eigen_sh.write("rm -f eigen_tmp.dat\n") #remove old dat files
 
     counter = 0
     for test in testcases:
@@ -305,27 +320,45 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        #    sizeStr += "%s:%d;"%(s,sizesTmp[s])
        #print "lookupSizes[\"%s-%s-%s\"] = \"%s\""%(tensors[0],tensors[1],tensors[2],sizeStr)
 
-       print_gett(A,B,C,sizesTmp,benchmarkName+"%d"%counter + ".tccg", stdout)
+       print_gett(A,B,C,sizesTmp,"tccg_"+benchmarkName+"%d"%counter + ".tccg", stdout)
        benchmarkFile.write("echo \""+benchmarkName+"%d"%counter+"\"\n")
        benchmarkFile.write("echo \""+test+"\" >> gett_tmp.dat\n")
        if( useReferenceVersion ):
            testing = "--testing"
        else:
            testing = ""
-       benchmarkFile.write("tccg %s --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(testing, maxImplementations, arch, floatType, numThreads)+benchmarkName+"%d"%counter + ".tccg | tee > %s%d.dat\n"%(benchmarkName,counter))
-       benchmarkFile.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep -i \"error\"\n")
-       benchmarkFile.write("cat "+"%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
+       benchmarkFile.write("tccg %s --ignoreDatabase --maxImplementations=%d --arch=%s --floatType=%s --numThreads=%d "%(testing, maxImplementations, arch, floatType, numThreads)+"tccg_"+benchmarkName+"%d"%counter + ".tccg | tee > tccg_%s%d.dat\n"%(benchmarkName,counter))
+       benchmarkFile.write("cat "+"tccg_%s%d.dat"%(benchmarkName,counter) + " | grep -i \"error\"\n")
+       benchmarkFile.write("cat "+"tccg_%s%d.dat"%(benchmarkName,counter) + " | grep \"Best Loop\" >> gett_tmp.dat\n")
 
-       ctfFilename = benchmarkName+"CTF"+"%d"%counter + ".cpp"
+       ctfFilename = "ctf_"+benchmarkName+"%d"%counter + ".cpp"
+       libtensorFilename = "libtensor_"+benchmarkName+"%d"%counter + ".C"
+       tblisFilename = "tblis_"+benchmarkName+"%d"%counter + ".c"
+       eigenFilename = "eigen_"+benchmarkName+"%d"%counter + ".cpp"
        print_matlab(sizesTmp, tensors[1], tensors[2], tensors[0], floatType, matlabfile)
+       print_ctf(libtensor.gen(sizesTmp, tensors[1], tensors[2], tensors[0], floatType, numThreads), libtensorFilename)
        print_ctf(ctf.genCTF(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), ctfFilename)
+       print_ctf(tblis.genTBLIS(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), tblisFilename)
+       print_ctf(eigen.genEigen(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), eigenFilename)
        ctf_sh.write("icpc %s -O0 -I${MPI_INCLUDE} -I${CTF_ROOT}/include ${CTF_ROOT}/lib/libctf.a -std=c++0x -L${MPI_LIBDIR} -mkl -lmpi -xHost\n"%(ctfFilename)) #O0 is used to avoid that the compiler removes trashCache()
        ctf_sh.write("echo \""+test+"\" | tee >> ctf_tmp.dat\n")
        ctf_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=1  mpirun -np 1 -genv I_MPI_FABRICS shm ./a.out | grep GF >> ctf_tmp.dat\n")
+       tblis_sh.write("icc -O0  %s -I%s/include %s/lib/libtblis.a -L%s/lib -ltci -lhwloc -std=c99 -qopenmp -xHost\n"%(tblisFilename,_TBLISRoot,_TBLISRoot,_TBLISRoot)) #O0 is used to avoid that the compiler removes trashCache()
+       tblis_sh.write("echo \""+test+"\" | tee >> tblis_tmp.dat\n")
+       tblis_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=1 ./a.out | grep GF >> tblis_tmp.dat\n")
+       eigen_sh.write("icpc -O3 -I%s -std=c++14 -qopenmp -xHost %s\n"%(_EigenRoot,eigenFilename)) #O0 is used to avoid that the compiler removes trashCache()
+       eigen_sh.write("echo \""+test+"\" | tee >> eigen_tmp.dat\n")
+       eigen_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=1 ./a.out | grep GF >> eigen_tmp.dat\n")
        counter += 1
 
     benchmarkFile.write("cat gett_tmp.dat | sed '$!N;s/\\n/ /' > tccg_"+benchmarkName+".dat\n") #
     ctf_sh.write("cat ctf_tmp.dat | sed '$!N;s/\\n/ /' > ctf_"+benchmarkName+".dat\n") #
+    tblis_sh.write("cat tblis_tmp.dat | sed '$!N;s/\\n/ /' > tblis_"+benchmarkName+"2.dat\n") #
+    tblis_sh.write("python maxFromFiles.py tblis_"+benchmarkName+"2.dat tblis_"+benchmarkName+".dat\n") #
+    tblis_sh.write("rm -f tblis_"+benchmarkName+"2.dat\n") #
+    eigen_sh.write("cat eigen_tmp.dat | sed '$!N;s/\\n/ /' > eigen_"+benchmarkName+".dat\n") #
+    benchmarkFileTBLIS.write("./tblis_"+benchmarkName+".sh\n")
+    benchmarkFileEigen.write("./eigen_"+benchmarkName+".sh\n")
 
 def main():
    parser = argparse.ArgumentParser(description='Generate high-performance C++ code for a given tensor contraction.')
@@ -363,15 +396,18 @@ def main():
    matlabfile.write("cd %s\n"%os.getcwd())
 
    benchmarkFile = open("tccg_benchmark.sh","w")
+   benchmarkFileTBLIS = open("tblis_benchmark.sh","w")
+   benchmarkFileEigen = open("eigen_benchmark.sh","w")
    stdout = []
    sizes = {}
    sizes["j"] = 24
-   generate(testcases_intensli,"intensli", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion, sizes)
-   generate(testcases_ao2mo,"ao2mo", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion )
-   generate(testcases_ccsd,"ccsd", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion )
-   generate(testcases_ccsd_t,"ccsd_t", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, useReferenceVersion )
+   generate(testcases_intensli,"intensli", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile,benchmarkFileTBLIS,benchmarkFileEigen, useReferenceVersion, sizes)
+   generate(testcases_ao2mo,"ao2mo", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, benchmarkFileTBLIS,benchmarkFileEigen,useReferenceVersion )
+   generate(testcases_ccsd,"ccsd", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, benchmarkFileTBLIS,benchmarkFileEigen,useReferenceVersion )
+   generate(testcases_ccsd_t,"ccsd_t", arch,numThreads,maxImplementations,floatType,matlabfile, stdout, benchmarkFile, benchmarkFileTBLIS,benchmarkFileEigen,useReferenceVersion )
    matlabfile.close()
    benchmarkFile.close()
+
 
    for tc in _sortedTCs:
        for generatedTC in stdout:

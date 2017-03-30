@@ -4,10 +4,11 @@ import itertools
 from tccg_util import *
 
 class GemmLoop:
-    def __init__ (self, A, B, C, alpha, beta, numThreads, floatType, arch, batchedGEMM):
+    def __init__ (self, A, B, C, alpha, beta, numThreads, floatType, arch, batchedGEMM, maxCandidates):
         self.arch = arch
         self.batchedGEMM = batchedGEMM
         self.candidates = {}
+        self.maxCandidates = maxCandidates
         self.A = A
         self.B = B
         self.C = C
@@ -267,6 +268,7 @@ class GemmLoop:
         if( kIdx.label != "dummy" ):
             kIndicesChoices = [kIdx]
            
+        generatedCode = {}
         for nIdx in nIndicesChoices: # freely choose the n-index of the GEMM
            for kIdx in kIndicesChoices: # freely choose the k-index of the GEMM
               gemmIndices = [mIdx, nIdx, kIdx]
@@ -287,16 +289,29 @@ class GemmLoop:
                           codeTmp, include = self.genLoGBody(loopOrderFreeIndices,
                                   loopOrderContractedIndices,
                                   batchedIdx, mIdx, nIdx, kIdx, AA, BB, C)
-                          code += codeTmp
-                          codeHpp += include
+
+                          candidateName = self.getCandidateName(loopOrderFreeIndices, loopOrderContractedIndices, batchedIdx, mIdx, nIdx, kIdx)
+                          generatedCode[candidateName] = [codeTmp, include]
                           counter += 1
+
+        # only generate good candidates
+        goodCandidatesStr = self.selectBestCandidate()
+        genCount = 0
+        selectedCandidates = {}
+        for candidate in self.candidates:
+            if( genCount < self.maxCandidates and goodCandidatesStr.find(candidate) != -1 ):
+                selectedCandidates[candidate] = self.candidates[candidate]
+                code += generatedCode[candidate][0]
+                codeHpp += generatedCode[candidate][1]
+                genCount += 1
+        self.candidates = selectedCandidates 
+
         fgett = open("loopOverGemm.cpp","w")
         fgett.write(code)
         fgett.close()
         fgett = open("loopOverGemm.hpp","w")
         fgett.write(codeHpp)
         fgett.close()
-        self.selectBestCandidate()
 
     def selectBestCandidate(self):
         print "Total amount of LoG implementations: %d"%len(self.candidates)
@@ -320,7 +335,6 @@ class GemmLoop:
 
         # 1) only consider candidates with maximum gemm size
         # 2) only consider candidates with maximum batch size
-        # 3) TODO: account for loop-order
         goodCandidatesStr = ""
         for candidate in self.candidates:
             batchSize = self.candidates[candidate][0]
@@ -331,4 +345,5 @@ class GemmLoop:
             if( gemmSize == maxGemmSize and batchSize == maxBatchSize ):
                 goodCandidatesStr += candidate + ", "
         print "Best LoG candidates: ", goodCandidatesStr[0:-2]
+        return goodCandidatesStr 
 

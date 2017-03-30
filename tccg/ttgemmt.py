@@ -10,11 +10,13 @@ class TTGEMMT:
     """
     param gemm is only used for internal purposes; it is used to estimate an upper bound on performance by omitting the transpositions
     """
-    def __init__ (self, A, B, C, alpha, beta, numThreads, arch, floatType, gemm, generateOnly ):
+    def __init__ (self, A, B, C, alpha, beta, numThreads, arch, floatType, gemm,
+            generateOnly, maxCandidates ):
         self.generateOnly = generateOnly
         self.arch = arch
         self.A = A
         self.B = B
+        self.maxCandidates = maxCandidates
         if( not A.hasIndex(C.indices[0]) ): #adhere to the definition of mInd and nInd
            self.A = B
            self.B = A
@@ -97,16 +99,19 @@ class TTGEMMT:
             if( transpositions[candidate] == minTransposeTime ):
                 goodCandidates.append(candidate)
 
-        bestCandidate = goodCandidates[0]
-        goodCandidatesStr = ""
+        goodCandidatesStr= ""
+        goodCandidatesCount = 0
         for candidate in goodCandidates:
-                goodCandidatesStr += candidate + ", "
+            goodCandidatesStr += candidate + ", "
+            goodCandidatesCount += 1
+            if( goodCandidatesCount >= self.maxCandidates ):
+                break
         return goodCandidatesStr[0:-2]
 
 
     def skipCandidate(self, candidate, transpositions):
-        return False # TODO
-        if( candidate != self.selectBestCandidate( transpositions ) ):
+        goodCandidatesStr = self.selectBestCandidate( transpositions )
+        if( goodCandidatesStr.find(candidate) == -1 ):
             return True
         else:
             return False
@@ -221,9 +226,8 @@ void %s(const char *transa, const char *transb,
                                                 self.floatType, 1.0, 0.0,
                                                 self.numThreads, self.arch,
                                                 self.generateOnly, 1)
-                                        if( self.useAsGEMM == 0 ):
-                                           codeblocks.append(transposeA)
-                                           tmpA = transposeA.OUT
+                                        codeblocks.append(transposeA)
+                                        tmpA = transposeA.OUT
                                         transposeTime += transposeA.getTransposeTime(self.arch.axpyBandwidth)
                                     # Transpose B
                                     if( B.transposeRequired( indicesB ) ):
@@ -231,9 +235,8 @@ void %s(const char *transa, const char *transb,
                                                 self.floatType, 1.0, 0.0,
                                                 self.numThreads, self.arch,
                                                 self.generateOnly, 1)
-                                        if( self.useAsGEMM == 0 ):
-                                           codeblocks.append(transposeB)
-                                           tmpB = transposeB.OUT
+                                        codeblocks.append(transposeB)
+                                        tmpB = transposeB.OUT
                                         transposeTime += transposeB.getTransposeTime(self.arch.axpyBandwidth)
 
                                     # GEMM
@@ -242,7 +245,7 @@ void %s(const char *transa, const char *transb,
                                     codeblocks.append(gemm)
 
                                     # Transpose C
-                                    if( self.useAsGEMM == 0 and C.transposeRequired( indicesC ) ):
+                                    if( C.transposeRequired( indicesC ) ):
                                         transposeC = Transpose(gemm.OUT,
                                                 self.C.indices, self.floatType,
                                                 1.0, self.beta, self.numThreads,
@@ -275,8 +278,10 @@ void %s(const char *transa, const char *transb,
                                     for block in codeblocks:
                                        try:
                                            (include, cpp) = block.genCode()
-                                           code = include + code
-                                           implementation += cpp
+                                           if( self.useAsGEMM == 0 or 
+                                              (self.useAsGEMM == 1 and cpp.lower().find("gemm") != -1)): #skip transpositions for GEMM
+                                               code = include + code
+                                               implementation += cpp
                                        except:
                                            print "ERROR in TTGT:",A, "->",tmpA, B, "->",tmpB,C, candidateName
                                            traceback.print_stack()   
@@ -313,5 +318,13 @@ void %s(const char *transa, const char *transb,
             fgett = open("gemm.hpp","w")
             fgett.write(codeHpp)
             fgett.close()
+
+        # remove all unwanted candidates
+        goodCandidatesStr = self.selectBestCandidate( transpositions )
+        selectedCandidates = {}
+        for candidate in self.candidates:
+            if( goodCandidatesStr.find(candidate) != -1 ):
+                selectedCandidates[candidate] = self.candidates[candidate]
+        self.candidates = selectedCandidates 
 
         return (maxWork)

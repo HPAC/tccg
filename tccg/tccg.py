@@ -18,6 +18,7 @@ from tccg_util import *
 from tensor import *
 from gemm_loop import *
 from ttgemmt import *
+import time
 import socket
 
 OKGREEN = '\033[92m'
@@ -37,6 +38,8 @@ class TccgArgs:
         self.ignoreDatabase = 0
         self.useTimings = 0
         self.maxImplementations = 16
+        self.maxImplementationsLoG = 1
+        self.maxImplementationsTTGT = 1
         self.compiler = "icpc"
         self.blasLib = "-mkl"
         self.cudaLib = "-L${CUDA_ROOT}/lib64 -lcublas"
@@ -116,15 +119,15 @@ class Tccg:
             print "[GETT] Error: architecture unknown"
             exit(-1)
         self.ttgemmt = TTGEMMT(self.A, self.B, self.C, self.alpha, self.beta,
-                self.args.numThreads, arch, self.floatType, 0, self.args.generateOnly)
+                self.args.numThreads, arch, self.floatType, 0, self.args.generateOnly, self.args.maxImplementationsTTGT)
         self.gemm = TTGEMMT(self.A, self.B, self.C, self.alpha, self.beta,
-                self.args.numThreads, arch, self.floatType, 1, self.args.generateOnly) #only used for internal measurements
+                self.args.numThreads, arch, self.floatType, 1, self.args.generateOnly, self.args.maxImplementationsTTGT) #only used for internal measurements
         self.gett = Gett(self.A, self.B, self.C, self.alpha, self.beta,
                 self.args.numThreads, arch, self.floatType,
                 self.args.maxImplementations, self.args.useDynamicMemory,
                 self.args.fastMeasurements, self.args.generateOnly, self.args.useTimings )
         self.gemmLoop = GemmLoop(self.A, self.B, self.C, self.alpha, self.beta,
-                self.args.numThreads, self.floatType, arch, self.args.batchedGEMM)
+                self.args.numThreads, self.floatType, arch, self.args.batchedGEMM, self.args.maxImplementationsLoG)
 
 
         if( self.floatType == "float" or  self.floatType == "double") :
@@ -227,6 +230,7 @@ class Tccg:
         # generate versions
         ###########################################
         workspace = 0
+        startTime = time.time()
         if( not self.args.gettOnly ):
             if( not self.args.noTTGT ):
                 workspace = self.ttgemmt.genCode(self.args.maxWorkspace)
@@ -241,11 +245,13 @@ class Tccg:
 
         if( self.args.generateOnly ):
             return
+        codeGenTime = time.time() - startTime
 
         ###########################################
         # compile versions
         ###########################################
         # copy makefile to tmp directory
+        startTime = time.time()
         fr = open("../Makefile","r")
         fw = open("./Makefile","w")
         fw.write("BLAS_LIB=%s"%self.args.blasLib)
@@ -273,11 +279,13 @@ class Tccg:
             print FAIL+"[TCC Error] compilation failed." + ENDC
             print "use '--verbose' for debugging purposes."
             raise
+        compTime = time.time() - startTime
 
         ###########################################
         # run versions
         ###########################################
 
+        startTime = time.time()
         #set environment variables
         my_env = os.environ.copy()
         my_env["OMP_NUM_THREADS"] = str(self.args.numThreads)
@@ -336,6 +344,9 @@ class Tccg:
             time.sleep(0.1)
 
         proc.wait()
+        print "Compilation took %.2f seconds"%(compTime)
+        print "Code-Generation took %.2f seconds"%(codeGenTime)
+        print "Timing all candidates took %.2f seconds"%(time.time() - startTime)
         if failCount > 0 or proc.returncode != 0:
             print FAIL+"[TCC Error] runtime error. (error code: %d)"%proc.poll(), ENDC
             raise
@@ -369,7 +380,7 @@ class Tccg:
             
 
         maxFlopsGEMM = 0
-        if( not self.args.noGEMM == 1):
+        if( len(gemmVersions) > 0 ):
             bestGEMMVersion = ""
             for GEMMVersion in gemmVersions:
                 sql_util.insertIntoGEMM(cursor, measurement_id, gemmVersions[GEMMVersion])
@@ -866,7 +877,7 @@ class Tccg:
 
        indent = "   "
        level = 1
-       code += "   int mRepeat = 3;\n"
+       code += "   int mRepeat = 2;\n"
        code += "   int nRepeat = 4;\n"
 
        code += "   double ttgemmt_time[%d];\n"%self.ttgemmt.numCandidates()
@@ -884,7 +895,7 @@ class Tccg:
        code += "      gemm_time[l] = FLT_MAX;\n"
 
        code += "   const double flops = %e;\n"%self.getFlopCount()
-       code += "   for(int r = 0; r < nRepeat; r++){\n"
+       code += "   for(int r = 0; r < mRepeat; r++){\n"
        ############################
        # REFERENCE version
        ############################
@@ -1114,7 +1125,9 @@ def main():
     parser.add_argument('--ignoreDatabase', action="store_true", help='ignore SQL database. This prevents a database lookup for an existing solution.')
     parser.add_argument('--fastMeasurements', action="store_true", help='Significantly reduces the measuring time for GETT. This feature deactivates testing. Moreover, the attained FLOPs are just a (very good) estimate for the real flops attained by GETT.')
     parser.add_argument('--numThreads', type=int, help='number of threads.')
-    parser.add_argument('--maxImplementations', type=int, help='maximum number of implementations to evaluate (default: 16). -1 denotes infinity.')
+    parser.add_argument('--maxImplementations', type=int, help='maximum number of GETT candidates to evaluate (default: 16). -1 denotes infinity.')
+    parser.add_argument('--maxImplementationsTTGT', type=int, help='maximum number of TTGT candidates to evaluate (default: 1). -1 denotes infinity.')
+    parser.add_argument('--maxImplementationsLoG', type=int, help='maximum number of LoG candidates to evaluate (default: 1). -1 denotes infinity.')
     parser.add_argument('--maxWorkspace', type=float, help='maximum auxiliary workspace in GB (default: no limit); this only affects the TTGT approach.')
     parser.add_argument('--arch', metavar='arch', type=str, help='architecture can be either avx2 (default), avx512, cuda.')
     parser.add_argument('--compiler', metavar='compiler', type=str, help='compiler can be either icpc (default), g++ or nvcc.')

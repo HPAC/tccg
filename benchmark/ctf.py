@@ -21,7 +21,7 @@ def genCTF(size, astr,bstr, cstr, dataType):
    code += "#include <stdio.h>\n"
    code += "using namespace CTF;\n"
    code += "\n"
-   code += "void trashCache(float* trash1, float* trash2, int nTotal){\n"
+   code += "static void trashCache(float* trash1, float* trash2, int nTotal){\n"
    code += "   for(int i = 0; i < nTotal; i ++) \n"
    code += "      trash1[i] += 0.99 * trash2[i];\n"
    code += "}\n"
