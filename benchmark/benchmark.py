@@ -8,9 +8,9 @@ import eigen
 import argparse
 
 _tensorToolboxRoot = "PATH_TO/tensor_toolbox" #set this if tensor_toolbox is available
-_CTFRoot = "PATH_TO/CTF"
-_TBLISRoot = "/home/ps072922/.local/"
-_EigenRoot = "/home/ps072922/projects/eigen-3.3.3/"
+_CTFRoot = "${CTF_ROOT}"
+_TBLISRoot = "${TBLIS_ROOT}"
+_EigenRoot = "${EIGEN_ROOT}"
 _tensorSize = 200. * 2**20 # Size of the largest tensor in bytes
 _dimensionMultipleStride1 = 24 # each stride-1 dimension has to be a multiple of this value
 _dimensionMultiple = 4 
@@ -340,15 +340,16 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        print_ctf(ctf.genCTF(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), ctfFilename)
        print_ctf(tblis.genTBLIS(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), tblisFilename)
        print_ctf(eigen.genEigen(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), eigenFilename)
-       ctf_sh.write("icpc %s -O0 -I${MPI_INCLUDE} -I${CTF_ROOT}/include ${CTF_ROOT}/lib/libctf.a -std=c++0x -L${MPI_LIBDIR} -mkl -lmpi -xHost\n"%(ctfFilename)) #O0 is used to avoid that the compiler removes trashCache()
+       ctf_sh.write("icpc %s -O0 -I${MPI_INCLUDE} -I${CTF_ROOT}/include ${CTF_ROOT}/lib/libctf.a -qopenmp -std=c++0x -L${MPI_LIBDIR} -mkl -lmpi -xHost\n"%(ctfFilename)) #O0 is used to avoid that the compiler removes trashCache()
        ctf_sh.write("echo \""+test+"\" | tee >> ctf_tmp.dat\n")
-       ctf_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=1  mpirun -np 1 -genv I_MPI_FABRICS shm ./a.out | grep GF >> ctf_tmp.dat\n")
+       #ctf_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d  ./a.out | grep GF >> ctf_tmp.dat\n"%numThreads)
+       ctf_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d  mpirun -np 1 -genv I_MPI_FABRICS shm ./a.out | grep GF >> ctf_tmp.dat\n"%numThreads)
        tblis_sh.write("icc -O0  %s -I%s/include %s/lib/libtblis.a -L%s/lib -ltci -lhwloc -std=c99 -qopenmp -xHost\n"%(tblisFilename,_TBLISRoot,_TBLISRoot,_TBLISRoot)) #O0 is used to avoid that the compiler removes trashCache()
        tblis_sh.write("echo \""+test+"\" | tee >> tblis_tmp.dat\n")
-       tblis_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=1 ./a.out | grep GF >> tblis_tmp.dat\n")
+       tblis_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d ./a.out | grep GF >> tblis_tmp.dat\n"%numThreads)
        eigen_sh.write("icpc -O3 -I%s -std=c++14 -qopenmp -xHost %s\n"%(_EigenRoot,eigenFilename)) #O0 is used to avoid that the compiler removes trashCache()
        eigen_sh.write("echo \""+test+"\" | tee >> eigen_tmp.dat\n")
-       eigen_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=1 ./a.out | grep GF >> eigen_tmp.dat\n")
+       eigen_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d ./a.out | grep GF >> eigen_tmp.dat\n"%numThreads)
        counter += 1
 
     benchmarkFile.write("cat gett_tmp.dat | sed '$!N;s/\\n/ /' > tccg_"+benchmarkName+".dat\n") #
