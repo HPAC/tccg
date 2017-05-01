@@ -193,12 +193,12 @@ class Gett:
              n_ = j
              offsetC = 0
              for ni in nIndL1:
-                 offsetC += n_ % ni.size * ChatMicro.getLd(ni)
+                 offsetC += (n_ % ni.size) * ChatMicro.getLd(ni)
                  n_ = n_ / ni.size
              m_ = i*self.arch.registerSize
              for mi in mIndL1:
-                 offsetC += m_ % mi.size * ChatMicro.getLd(mi)
-                 m_ = m_ / ni.size
+                 offsetC += (m_ % mi.size) * ChatMicro.getLd(mi)
+                 m_ = m_ / mi.size
 
              code += str(self.arch.load_l1("C", offsetC, tmpRegs[i + j * numRegsA], level*indent, 1))
              code += str( self.arch.fma(Register("beta_reg",self.arch.registerSize), tmpRegs[i + j * numRegsA], Cregs[i + j * numRegsA], Cregs[i + j * numRegsA], level*indent) ) 
@@ -212,12 +212,12 @@ class Gett:
              n_ = j
              offsetC = 0
              for ni in nIndL1:
-                 offsetC += n_ % ni.size * ChatMicro.getLd(ni)
+                 offsetC += (n_ % ni.size) * ChatMicro.getLd(ni)
                  n_ = n_ / ni.size
              m_ = i*self.arch.registerSize
              for mi in mIndL1:
-                 offsetC += m_ % mi.size * ChatMicro.getLd(mi)
-                 m_ = m_ / ni.size
+                 offsetC += (m_ % mi.size) * ChatMicro.getLd(mi)
+                 m_ = m_ / mi.size
              code += str(self.arch.store("C", offsetC,
                  Cregs[i + j * numRegsA], level*indent))
        level -=1
@@ -420,7 +420,7 @@ class Gett:
        code += "%s}\n"%(level*indent)
        return code
 
-    def _pack(self, ABC, level, indent, protectUpdateC, mInd1, nInd1, kInd1, transposeNameA, transposeNameB, transposeNameC, transposeNameC_bz, tensorA, tensorB, tensorC, sizeA, lda, ldaOut, sizeB, ldb, ldbOut, sizeC, ldc, ldcOut, scaleB):
+    def _pack(self, ABC, level, indent, protectUpdateC, mInd1, nInd1, kInd1, transposeNameA, transposeNameB, tensorA, tensorB, sizeA, lda, ldaOut, sizeB, ldb, ldbOut, scaleB):
       if( ABC == 'A'):
          return self.packA(level, indent, mInd1, nInd1, kInd1, transposeNameA, tensorA, sizeA, lda, ldaOut, not scaleB)
       elif( ABC == 'B'):
@@ -506,9 +506,9 @@ class Gett:
       return code
 
     def decodeVariant(self, variant, mInd0, mInd1, mIndRemainder, nInd0, nInd1, nIndRemainder, kInd0, kInd1,
-          transposeNameA, transposeNameB, transposeNameC, transposeNameC_bz,
+          transposeNameA, transposeNameB,
           tensorA, tensorB, tensorC, kc, sizeA, lda, ldaOut, sizeB, ldb,
-          ldbOut, sizeC, ldc, ldcOut, Ahat, Bhat, Chat ):
+          ldbOut, Ahat, Bhat, Chat ):
         code = ""
         level = 1
         indent = self.indent
@@ -522,9 +522,8 @@ class Gett:
                 protectUpdateC = posK > posC
                 code += self._pack(token[0], level, indent, protectUpdateC,
                       mInd1, nInd1, kInd1, transposeNameA, transposeNameB,
-                      transposeNameC, transposeNameC_bz, tensorA, tensorB,
-                      tensorC, sizeA, lda, ldaOut, sizeB, ldb, ldbOut, sizeC,
-                      ldc, ldcOut, variant[0] == 'n')
+                      tensorA, tensorB,
+                      sizeA, lda, ldaOut, sizeB, ldb, ldbOut, variant[0] == 'n')
 
             elif ( token[0:6] == "kernel" ): # MacroKernel
                 posK = variant.index("}k")
@@ -909,25 +908,9 @@ class Gett:
                                                    # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
                                                    print WARNING + "WARNING: packing of C will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(ChatMicro.countContiguousStrideOneElements(), self.arch.cacheLineSize)
                                                    print "    " + str(microTileC) + " -> " + str(ChatMicro) + ENDC
-                                               (transposeNameC, bandwidthC, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
-                                                       ChatMicro,
-                                                       self.floatType,
-                                                       self.alpha, 1.0,
-                                                       self.numThreads, 1,
-                                                       0, 0,
-                                                       self.arch.architectureName,self.generateOnly, 0)
-                                               (transposeNameC_bz, bandwidthC_bz, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
-                                                       ChatMicro,
-                                                       self.floatType,
-                                                       self.alpha, 0.0,
-                                                       self.numThreads, 1,
-                                                       0, 0,
-                                                       self.arch.architectureName,self.generateOnly, 0)
 
                                                # include headers
-                                               code = "#include \"ttc_transpositions/%s.h\"\n"%transposeNameC 
-                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameC_bz 
-                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameA
+                                               code = "#include \"ttc_transpositions/%s.h\"\n"%transposeNameA
                                                code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameB
                                                code += "#include <immintrin.h>\n"
                                                code += "#include <stdlib.h>\n"
@@ -995,13 +978,10 @@ class Gett:
                                                      kInd0, kInd1,
                                                      transposeNameA,
                                                      transposeNameB,
-                                                     "",
-                                                     "",
                                                      tensorA3, tensorB3,
                                                      tensorC4, kc, 
                                                      sizeA, lda, ldaOut, 
                                                      sizeB, ldb, ldbOut, 
-                                                     sizeC, ldc, ldcOut,
                                                      Ahat, Bhat, Chat)
                                                code += tmpCode
 
