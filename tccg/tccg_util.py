@@ -485,7 +485,7 @@ def countRequiredSplits(subset, superset):
 # Note that I_1 may not just be a subset of I but it might be required to
 # split some indices of I to achieve the constraint Size(I_1) = size. Hence,
 # I = I_1 \union I_2 just resambles the rough idea of what's actually happening.
-def splitIndexSet(indices, size, tensorA, tensorB):
+def splitIndexSet(indices, size, tensorA, tensorB, registerSizeElements = 8,  BisImportant = False):
 
     primsMC = getPrimeFactors(size)
 
@@ -507,7 +507,6 @@ def splitIndexSet(indices, size, tensorA, tensorB):
                 indicesWithPrimfactor[p].append(idx)
 
     # 1) get all candidates
-    indL0 = set()
     candidates = __getSolutions(list(set(primsMC)), count, indicesWithPrimfactor, [[]])
 
     # 2) remove all invalid candidates
@@ -516,6 +515,9 @@ def splitIndexSet(indices, size, tensorA, tensorB):
     for candidate in candidates: 
         if(( not hasItem(indices, tensorA.indices[0]) or hasItem(candidate, tensorA.indices[0])) and 
            ( not hasItem(indices, tensorB.indices[0]) or hasItem(candidate, tensorB.indices[0])) ):
+            posB = findPosition(tensorB.indices[0], candidate)
+            if( BisImportant and posB != -1 and candidate[posB].size % registerSizeElements  != 0 ):
+                continue # skip those candidates for which the accesses to C are not contiguous
             validCandidates.append(candidate)
 
     # 3) select good candidates

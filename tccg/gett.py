@@ -141,12 +141,12 @@ class Gett:
         return text
 
 
-    def getMicroKernel(self, mc, mc1, nc, nc1, mr, nr):
+    def getMicroKernel(self, mc, mc1, nc, nc1, mr, nr, ChatMicro, mIndL1, nIndL1):
        numRegsA = self.getNumRegsA(mr) 
        level = 1
        indent = self.indent
        code = "template<int update, int kc>\n"
-       code += "static void microKernel(const %s *A, const %s *B, %s *C)\n"%(self.floatType,self.floatType,self.floatType)
+       code += "static void microKernel(const %s *A, const %s *B, %s *C, %s beta)\n"%(self.floatType,self.floatType,self.floatType,self.floatType)
        code += "{\n"
 
        if(mr % self.arch.registerSize != 0):
@@ -162,6 +162,8 @@ class Gett:
             code += str( self.arch.setzero(reg, level*indent, 1) )
             Cregs.append( reg )
        
+       code += "%s%s beta_reg = _mm256_set1_%s(beta);\n"%(level*indent, self.arch.registerType, self.arch.packedPostfix)
+
        if( self.unrollFactor > 1 ):
            code += "#pragma unroll (%d)\n"%(self.unrollFactor)
        code += "%sfor( int k_ = kc-1; k_ >= 0; k_-= 1 ){\n"%(level*indent)
@@ -185,17 +187,38 @@ class Gett:
             name = "tmp%d%d"%(i * self.arch.registerSize,j)
             reg = Register(name, self.arch.registerSize)
             tmpRegs.append(reg)
+
        for j in range(nr):
           for i in range(numRegsA):
-             code += str(self.arch.load_l1("C", i * self.arch.registerSize + j * mc1, tmpRegs[i + j * numRegsA], level*indent, 1)) #TODO L2
-             code += str( self.arch.add(tmpRegs[i + j * numRegsA], Cregs[i + j * numRegsA], Cregs[i + j * numRegsA], level*indent) ) 
+             n_ = j
+             offsetC = 0
+             for ni in nIndL1:
+                 offsetC += n_ % ni.size * ChatMicro.getLd(ni)
+                 n_ = n_ / ni.size
+             m_ = i*self.arch.registerSize
+             for mi in mIndL1:
+                 offsetC += m_ % mi.size * ChatMicro.getLd(mi)
+                 m_ = m_ / ni.size
+
+             code += str(self.arch.load_l1("C", offsetC, tmpRegs[i + j * numRegsA], level*indent, 1))
+             code += str( self.arch.fma(Register("beta_reg",self.arch.registerSize), tmpRegs[i + j * numRegsA], Cregs[i + j * numRegsA], Cregs[i + j * numRegsA], level*indent) ) 
 
        level -= 1
        code += "%s}\n"%(level*indent)
+
        code += "%s//update C\n"%(level*indent)
        for j in range(nr):
           for i in range(numRegsA):
-             code += str(self.arch.store("C", i * self.arch.registerSize + j * mc1,
+             n_ = j
+             offsetC = 0
+             for ni in nIndL1:
+                 offsetC += n_ % ni.size * ChatMicro.getLd(ni)
+                 n_ = n_ / ni.size
+             m_ = i*self.arch.registerSize
+             for mi in mIndL1:
+                 offsetC += m_ % mi.size * ChatMicro.getLd(mi)
+                 m_ = m_ / ni.size
+             code += str(self.arch.store("C", offsetC,
                  Cregs[i + j * numRegsA], level*indent))
        level -=1
        
@@ -214,16 +237,16 @@ class Gett:
            preC += " + "
 
        if( upperBound == "NC" ):
-           offsetB += preB + "in_ * NC1 * KC" 
-           offsetC += preC + "in_ * NC1 * MC" 
-           return ("NC1", "in_", offsetA, offsetB, offsetC)
+           offsetB += preB + "in_ * NR * KC" 
+           offsetC += preC + "in_ * NR * MC" 
+           return ("NR", "in_", offsetA, offsetB, offsetC)
        elif( upperBound == "MC" ):
            offsetA += preA + "im_ * MC1 * KC" 
-           offsetC += preC + "im_ * MC1 * NC1" 
+           offsetC += preC + "im_ * MC1 * NR" 
            return ("MC1", "im_", offsetA, offsetB, offsetC)
        elif( upperBound == "NC1" ):
-           offsetB += preB + "in1_ * NR" 
-           offsetC += preC #+ "in1_ * MC1" 
+       #    offsetB += preB + "in1_ * NR" 
+       #    offsetC += preC #+ "in1_ * MC1" 
            return ("NR", "in1_", offsetA, offsetB, offsetC)
        elif( upperBound == "MC1" ):
            offsetA += preA + "im1_ * MR" 
@@ -237,8 +260,7 @@ class Gett:
     #and B is already packed in row-major format: nc x kc
     def getMacroKernel(self, mc, mc1, nc, nc1, variant, C_hat,
           microTileC,Atilde, Btilde,  
-          mIndRemainder, nIndRemainder,transposeNameC_bz,transposeNameC,
-          sizeC, ldc, ldcOut):
+          mIndRemainder, nIndRemainder):
        indent = self.indent
        offsetA = "" 
        offsetB = "" 
@@ -246,7 +268,7 @@ class Gett:
 
        level = 1
        code = "template<int update, int kc>\n"
-       code += "static void macroKernel(const %s *A, const %s *B, %s *C, %s alpha, %s beta)\n"%(self.floatType,self.floatType,self.floatType,self.floatType,self.floatType)
+       code += "static void macroKernel(const %s *A, const %s *B, %s *C, %s beta)\n"%(self.floatType,self.floatType,self.floatType,self.floatType)
        code += "{\n"
        code += "%s//updating %s <- %s %s\n"%(level*indent, C_hat,Atilde, Btilde)
 
@@ -255,12 +277,9 @@ class Gett:
        for upperBound in variant:
            (inc, loopVar, offsetA, offsetB, offsetC) = self._getIncAndLoop(upperBound, offsetA, offsetB, offsetC)
            if( loopVar == 'in1_'):
-              code += "%s%s C_reg[%d] __attribute__((aligned(%d)));\n"%(level*indent, self.floatType, mc1 * nc1,4096)
+              continue #remove this loop!
+              #code += "%s%s C_reg[%d] __attribute__((aligned(%d)));\n"%(level*indent, self.floatType, mc1 * nc1,4096)
 
-           if(self.numThreads > 1 and loopVar == 'in1_'): 
-               # in the parallel case this has to come later in order to resolve conflicts with collpase(2)
-               code += self._declareMindices(level, indent, mIndRemainder)
-               code += self._declareNindices(level, indent, nIndRemainder)
            code += "%sfor( int %s = 0; %s < (%s/%s); %s ++){\n"%(level*indent, loopVar, loopVar, upperBound, inc, loopVar)
            level += 1
            if(self.numThreads == 1): 
@@ -273,41 +292,20 @@ class Gett:
        #    code += "%sfor( int im1_ = 0; im1_ < MC1; im1_+= MR ){\n"%(level*indent)
        #    level += 1
 
+       offsetC = C_hat.getOffset(nIndRemainder + mIndRemainder) # extract subtensor
+
        code += "%s// blocking for registers\n"%(level*indent)
-       code += "%smicroKernel<0, kc>( &A[%s], &B[%s], &C_reg[in1_ * NR * MC1]);\n"%(level*indent,offsetA, offsetB) #TODO merge transposeC into micro-kernel
+       code += "%smicroKernel<update, kc>( &A[%s], &B[%s], &C[%s], beta);\n"%(level*indent,offsetA, offsetB, offsetC) #TODO merge transposeC into micro-kernel
        level -= 1
        code += "%s}\n"%(level*indent)
 
-       offsetC = C_hat.getOffset(nIndRemainder + mIndRemainder) # extract subtensor
-       size_str = ""
-       for s in sizeC:
-           size_str += "%d, "%s
-       size_str = size_str[:-2]
-       code += "%sint lda[] = {"%(indent * level)
-       for s in ldc:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       code += "%sint ldb[] = {"%(indent * level)
-       for s in ldcOut:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       # unpack C
-       code += "%s//updating %s\n"%(level*indent,microTileC)
-       #if( self.useTimings ):
-       #    code += "%sdouble start_ = omp_get_wtime();\n"%(level*indent)
-       code += "%sif( update ){\n"%(level*indent)
-       level += 1
-       code += "%s%s<%s>(C_reg, &C[%s], alpha, beta, lda, ldb);\n"%(level*indent,transposeNameC, size_str, offsetC)
-       level -= 1
-       code += "%s}else{\n"%(level*indent)
-       level += 1
-       code += "%s%s<%s>(C_reg, &C[%s], alpha, lda, ldb);\n"%(level*indent,transposeNameC_bz, size_str, offsetC)
-       level -= 1
-       code += "%s}\n"%(level*indent)
        #if( self.useTimings ):
        #    code += "%stime_pack_c += omp_get_wtime() - start_;\n"%(level*indent)
        #    code += "%sbytes_pack_c += (%f);\n"%(level*indent,self.floatSize * mc1 * nc1)
        for upperBound in variant[1:]:
+           (inc, loopVar, offsetA, offsetB, offsetC) = self._getIncAndLoop(upperBound, offsetA, offsetB, offsetC)
+           if( loopVar == 'in1_'):
+              continue #remove this loop!
            level -= 1
            code += "%s}\n"%(level*indent)
 
@@ -361,46 +359,7 @@ class Gett:
         return "void %s(%s * __restrict__ %s, %s * __restrict__ %s, %s * __restrict__ %s, const %s alpha, const %s beta)"%(
             name, self.floatType, self.A.label, self.floatType, self.B.label, self.floatType, self.C.label, self.floatType, self.floatType)
 
-    def unpackC(self, level, indent, protectUpdateC, mInd1, nInd1, kInd1, transposeNameC, transposeNameC_bz, tensorC, size, lda, ldb):
-       offsetC = tensorC.getOffset(nInd1 + mInd1) # extract subtensor
-
-       code = "%s{ // unpack C\n"%(level*indent)
-       level+=1
-
-       size_str = ""
-       for s in size:
-           size_str += "%d, "%s
-       size_str = size_str[:-2]
-       
-       code += "%sint lda[] = {"%(indent * level)
-       for s in lda:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       code += "%sint ldb[] = {"%(indent * level)
-       for s in ldb:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       if( self.beta != 0 ):
-           if( protectUpdateC ):
-               code += "%sif( ik_ == 0 )\n"%(level*indent)
-               code += "   %s%s<%s>(C_L2, &C[%s], alpha, beta, lda, ldb);\n"%(level*indent,transposeNameC, size_str, offsetC)
-               code += "%selse\n"%(level*indent)
-               code += "   %s%s<%s>(C_L2, &C[%s], alpha, 1.0, lda, ldb);\n"%(level*indent,transposeNameC, size_str, offsetC)
-           else:
-               code += "%s%s<%s>(C_L2, &C[%s], alpha, beta, lda, ldb);\n"%(level*indent,transposeNameC, size_str, offsetC)
-       else:
-           if( protectUpdateC ):
-               code += "%sif( ik_ == 0 )\n"%(level*indent)
-               code += "   %s%s<%s>(C_L2, &C[%s], alpha, lda, ldb);\n"%(level*indent,transposeNameC_bz, size_str, offsetC)
-               code += "%selse\n"%(level*indent)
-               code += "   %s%s<%s>(C_L2, &C[%s], alpha, 1.0, lda, ldb);\n"%(level*indent,transposeNameC, size_str, offsetC)
-           else:
-               code += "%s%s<%s>(C_L2, &C[%s], alpha, lda, ldb);\n"%(level*indent,transposeNameC_bz, size_str, offsetC)
-       level-=1
-       code += "%s}\n"%(level*indent)
-       return code
-
-    def packA(self, level, indent, mInd1, nInd1, kInd1, transposeName, tensorA, size, lda, ldb):
+    def packA(self, level, indent, mInd1, nInd1, kInd1, transposeName, tensorA, size, lda, ldb, scale):
        offsetAk = tensorA.getOffset(mInd1 + kInd1) # extract subtensor
 
        code = "%s{ // pack A\n"%(level*indent)
@@ -419,7 +378,10 @@ class Gett:
        for s in ldb:
            code += "%s,"%s
        code = code[:-1] + "};\n"
-       code += "%s%s<%s>(&A[%s], A_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
+       if( scale ):
+           code += "%s%s<%s>(&A[%s], A_L2, alpha, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
+       else:
+           code += "%s%s<%s>(&A[%s], A_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
        if( self.useTimings ):
            code += "%stime_pack_a += omp_get_wtime() - start_;\n"%(level*indent)
            code += "%sbytes_pack_a += (MC * KC * %f);\n"%(level*indent,self.floatSize)
@@ -428,7 +390,7 @@ class Gett:
        return code
 
 
-    def packB(self, level, indent, mInd1, nInd1, kInd1, transposeName, tensorB, size, lda, ldb):
+    def packB(self, level, indent, mInd1, nInd1, kInd1, transposeName, tensorB, size, lda, ldb, scale):
        offsetBk = tensorB.getOffset(nInd1 + kInd1) # extract subtensor
 
        code = "%s{ // pack B\n"%(level*indent)
@@ -447,7 +409,10 @@ class Gett:
        for s in ldb:
            code += "%s,"%s
        code = code[:-1] + "};\n"
-       code += "%s%s<%s>(&B[%s], B_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
+       if( scale ):
+           code += "%s%s<%s>(&B[%s], B_L2, alpha, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
+       else:
+           code += "%s%s<%s>(&B[%s], B_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
        if( self.useTimings ):
            code += "%stime_pack_b += omp_get_wtime() - start_;\n"%(level*indent)
            code += "%sbytes_pack_b += (NC * KC * %f);\n"%(level*indent,self.floatSize)
@@ -455,14 +420,13 @@ class Gett:
        code += "%s}\n"%(level*indent)
        return code
 
-    def _pack(self, ABC, level, indent, protectUpdateC, mInd1, nInd1, kInd1, transposeNameA, transposeNameB, transposeNameC, transposeNameC_bz, tensorA, tensorB, tensorC, sizeA, lda, ldaOut, sizeB, ldb, ldbOut, sizeC, ldc, ldcOut):
+    def _pack(self, ABC, level, indent, protectUpdateC, mInd1, nInd1, kInd1, transposeNameA, transposeNameB, transposeNameC, transposeNameC_bz, tensorA, tensorB, tensorC, sizeA, lda, ldaOut, sizeB, ldb, ldbOut, sizeC, ldc, ldcOut, scaleB):
       if( ABC == 'A'):
-         return self.packA(level, indent, mInd1, nInd1, kInd1, transposeNameA, tensorA, sizeA, lda, ldaOut)
+         return self.packA(level, indent, mInd1, nInd1, kInd1, transposeNameA, tensorA, sizeA, lda, ldaOut, not scaleB)
       elif( ABC == 'B'):
-         return self.packB(level, indent, mInd1, nInd1, kInd1, transposeNameB, tensorB, sizeB, ldb, ldbOut)
+         return self.packB(level, indent, mInd1, nInd1, kInd1, transposeNameB, tensorB, sizeB, ldb, ldbOut, scaleB)
       elif( ABC == 'C'):
          return ""
-      #   return self.unpackC( level, indent, protectUpdateC, mInd1, nInd1, kInd1, transposeNameC, transposeNameC_bz, tensorC, sizeC, ldc, ldcOut)
       else:
          print FAIL + "ERROR: packing cannot be decoded.", ABC +ENDC
          exit(-1)
@@ -560,7 +524,7 @@ class Gett:
                       mInd1, nInd1, kInd1, transposeNameA, transposeNameB,
                       transposeNameC, transposeNameC_bz, tensorA, tensorB,
                       tensorC, sizeA, lda, ldaOut, sizeB, ldb, ldbOut, sizeC,
-                      ldc, ldcOut)
+                      ldc, ldcOut, variant[0] == 'n')
 
             elif ( token[0:6] == "kernel" ): # MacroKernel
                 posK = variant.index("}k")
@@ -569,11 +533,11 @@ class Gett:
                 code += "%s//%s <- %s %s\n"%(level*indent,Chat, Ahat, Bhat)
                 code += "%sif( ik_ == 0 )\n"%(level*indent)
                 code += "%sif( beta == 0 )\n"%((level+1)*indent)
-                code += "%smacroKernel<0, %d>(A_L2, B_L2, &C[%s],alpha, beta);\n"%((level+2)*indent, kc,offsetC)
+                code += "%smacroKernel<0, %d>(A_L2, B_L2, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
                 code += "%selse\n"%((level+1)*indent)
-                code += "%smacroKernel<1, %d>(A_L2, B_L2, &C[%s],alpha, beta);\n"%((level+2)*indent, kc,offsetC)
+                code += "%smacroKernel<1, %d>(A_L2, B_L2, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
                 code += "%selse\n"%(level*indent)
-                code += "%s   macroKernel<1, %d>(A_L2, B_L2, &C[%s],alpha, 1.0);\n"%(level*indent, kc,offsetC)
+                code += "%s   macroKernel<1, %d>(A_L2, B_L2, &C[%s],1.0);\n"%(level*indent, kc,offsetC)
 
             elif ( token[0] == "}" and len(token) == 2 ): #closing braces
                 if( self.fastMeasurements and i == len(variant)-1 ):
@@ -806,250 +770,257 @@ class Gett:
                for mc in mcValues:
                    if( self.sizeM % mc != 0 or mc % mr != 0): 
                        continue
-                   nc1Values = [nr] # the analysis of the performance results indicates that mr = nr is optimal in almost all cases (feel free to try different values for nc1 if you feel fit)
 
-                   for nc1 in nc1Values:
-                       if( self.sizeN % nc1 != 0 or nc1 % nr != 0): 
+                   nc1 = nr # the analysis of the performance results indicates that nc1 = nr is optimal in almost all cases (feel free to try different values for nc1 if you feel fit)
+
+                   if( self.sizeN % nc1 != 0 or nc1 % nr != 0): 
+                       continue
+                   targetNc = 192
+                   if( self.floatType == "double" ):
+                       targetNc /= 2
+                   ncValues = self.getPossibleValues(nc1, self.sizeN, targetNc, 3)
+
+                   if( variant[0] == 'n' ): # make NC large such that the packing of A doesn't cost too much
+                       if( self.sizeN < 4600 ):
+                           ncValues = [self.sizeN]
+                       else:
+                           # choose nc s.t. it divides N _and_ s.t. nc is roughly 4600 (or smaller in size)
+                           ncValues = self.getPossibleValues(nc1, self.sizeN, 4600, 3)
+
+                   for nc in ncValues:
+                       if( self.sizeN % nc != 0 ):
                            continue
-                       targetNc = 192
-                       if( self.floatType == "double" ):
-                           targetNc /= 2
-                       ncValues = self.getPossibleValues(nc1, self.sizeN, targetNc, 3)
+                       kcValues = self.getPossibleValues(1, self.sizeK, 256, 4)
 
-                       if( variant[0] == 'n' ): # make NC large such that the packing of A doesn't cost too much
-                           if( self.sizeN < 4600 ):
-                               ncValues = [self.sizeN]
-                           else:
-                               # choose nc s.t. it divides N _and_ s.t. nc is roughly 4600 (or smaller in size)
-                               ncValues = self.getPossibleValues(nc1, self.sizeN, 4600, 3)
-
-                       for nc in ncValues:
-                           if( self.sizeN % nc != 0 ):
+                       for kc in kcValues:
+                           if( self.sizeK % kc != 0 ):
                                continue
-                           kcValues = self.getPossibleValues(1, self.sizeK, 256, 4)
+           # 2) search for different permutations
+                           # split indices to fit L2 cache
+                           splitsAC = splitIndexSet(copy.deepcopy(self.mInd), mc, self.A, self.C, self.arch.registerSize, True)
+                           for (mInd0, mInd1, tensorA, tensorC) in splitsAC: #mInd0 is if size mc
+                               splitsBC = splitIndexSet(copy.deepcopy(self.nInd), nc, self.B, tensorC)
+                               for (nInd0, nInd1, tensorB, tensorC2) in splitsBC: #nInd0 is if size nc
+                                   splitsAB = splitIndexSet(copy.deepcopy(self.kInd), kc, tensorA, tensorB)
+                                   for (kInd0, kInd1, tensorA2, tensorB2) in splitsAB:
+                                   
+                                       # Split indices again to fit L1 cache and to achieve the desired BLIS-like packing format
+                                       splitsAC_L1 = splitIndexSet(copy.deepcopy(mInd0), mc1, tensorA2, tensorC2, self.arch.registerSize, True) 
+                                       for (mIndL1, mIndRemainder, tensorA3, tensorC3) in splitsAC_L1:
+                                           splitsBC_L1 = splitIndexSet(copy.deepcopy(nInd0), nc1, tensorB2, tensorC3)
+                                           for (nIndL1, nIndRemainder, tensorB3, tensorC4) in splitsBC_L1:
 
-                           for kc in kcValues:
-                               if( self.sizeK % kc != 0 ):
-                                   continue
-               # 2) search for different permutations
-                               # split indices to fit L2 cache
-                               splitsAC = splitIndexSet(copy.deepcopy(self.mInd), mc, self.A, self.C)
-                               for (mInd0, mInd1, tensorA, tensorC) in splitsAC: #mInd0 is if size mc
-                                   splitsBC = splitIndexSet(copy.deepcopy(self.nInd), nc, self.B, tensorC)
-                                   for (nInd0, nInd1, tensorB, tensorC2) in splitsBC: #nInd0 is if size nc
-                                       splitsAB = splitIndexSet(copy.deepcopy(self.kInd), kc, tensorA, tensorB)
-                                       for (kInd0, kInd1, tensorA2, tensorB2) in splitsAB:
-                                       
-                                           # Split indices again to fit L1 cache and to achieve the desired BLIS-like packing format
-                                           splitsAC_L1 = splitIndexSet(copy.deepcopy(mInd0), mc1, tensorA2, tensorC2) 
-                                           for (mIndL1, mIndRemainder, tensorA3, tensorC3) in splitsAC_L1:
-                                               splitsBC_L1 = splitIndexSet(copy.deepcopy(nInd0), nc1, tensorB2, tensorC3)
-                                               for (nIndL1, nIndRemainder, tensorB3, tensorC4) in splitsBC_L1:
+           # 3) generate current candidate/implementation
+                                               mIndHat = copy.deepcopy(mIndL1 + mIndRemainder) 
+                                               nIndHat = copy.deepcopy(nIndL1 + nIndRemainder)
+                                               kIndHat = copy.deepcopy(kInd0) 
+                                           
+                                               # extract Sub-tensors A and B
+                                               indAhat = mIndHat + kIndHat 
+                                               indBhat = nIndHat + kIndHat
+                                               indChat = mIndHat + nIndHat
+                                               Ahat = tensorA3.getSubTensor(indAhat) # non-packed subtensor, see paper
+                                               Bhat = tensorB3.getSubTensor(indBhat) # non-packed subtensor, see paper
+                                               Chat = tensorC4.getSubTensor(indChat) # non-packed 4D subtensor
+                                               ChatMicro = Chat.getSubTensor(mIndL1 + nIndL1) # non-packed 2D subtensor
+                                           
+                                               indAtilde = mIndL1 + kIndHat + mIndRemainder
+                                               indBtilde = nIndL1 + kIndHat + nIndRemainder
+                                               indABtilde = mIndL1 + nIndL1# + mIndRemainder + nIndRemainder
+                                           
+                                               Atilde  = Tensor("A~",  indAtilde)  #packed subtensor, see paper
+                                               Btilde  = Tensor("B~",  indBtilde)  #packed subtensor, see paper
+                                               ABtilde = Tensor("AB~", indABtilde) #packed subtensor, see paper
+                                               microTileC = Tensor("Cmicro",mIndL1 + nIndL1) # packed 2D subtensor
+                                                                                             # The macro-kernel iterates over Chat in steps of the microTileC
+                                               #print microTileC 
+                                               #mstr = ""
+                                               #for x in mIndL1:
+                                               #    mstr += str(x) +", "
+                                               #mstr += "\n"
+                                               #for x in nIndL1:
+                                               #    mstr += str(x) +", "
+                                               #print mstr + "\n"
 
-               # 3) generate current candidate/implementation
-                                                   mIndHat = copy.deepcopy(mIndL1 + mIndRemainder) 
-                                                   nIndHat = copy.deepcopy(nIndL1 + nIndRemainder)
-                                                   kIndHat = copy.deepcopy(kInd0) 
+                                               ########################################
+                                               # generate Transpositions using TTC
+                                               ########################################
+                                               permA = tccg_util.getPerm(Ahat, Atilde)
+                                               permB = tccg_util.getPerm(Bhat, Btilde)
+                                               permC = tccg_util.getPerm(ABtilde, Chat)
+
+                                               key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr)# tensorA3.getIndexStr(), tensorB3.getIndexStr(), tensorC4.getIndexStr())
+                                               indicesStr = tensorA3.getIndexStr()+"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr()
+                                               if( len(fastestKey) > 0 ): # fastestKey has been provided
+                                                   if( variant_id != fastestKey[0]
+                                                    or mc != fastestKey[1]
+                                                    or nc != fastestKey[2]
+                                                    or kc != fastestKey[3]
+                                                    or mc1 != fastestKey[4]
+                                                    or nc1 != fastestKey[5]
+                                                    or mr != fastestKey[6]
+                                                    or nr != fastestKey[7]
+                                                    or indicesStr != fastestKey[8]):
+                                                       continue
+                                               estFlops = self.estimateGFLOPS(mc, nc, kc, mc1, nc1, mr, nr, permA, permB, permC, variant)
+                                               if( estimatedGflops.has_key(key) ): 
+                                                   estimatedGflops[key] = max(estimatedGflops[key], estFlops) #only consider the best-rated permutation per variant
+                                               else:
+                                                   estimatedGflops[key] = estFlops
+                                               if( estFlops < estimatedGflops[key] or done.has_key(key) ): # only consider the best-rated permutation per variant, this helps to sample the 
+                                                  continue                              # search space in a coarser fashion and avoids to sample very similar candidates redundantly.
+
+                                               maxImpl = min(self.maxImplementations-1, len(sortedEstimatedGflops)-1)
+                                               if( estimate_or_generate == 0 or estimatedGflops[key] < sortedEstimatedGflops[maxImpl] or self.numImpl >= self.maxImplementations):
+                                                  continue; #skip the code generation process in the first phase (we first estimate the performance)
+
+                                               done[key] = 1
+
+                                               #print "var: %d mc: %d, nc: %d, kc: %d, nc1: %d %f"%(variant_id,mc,nc,kc,nc1, estimatedGflops )
+                                           
+                                               ########################################
+                                               # generate Transpositions using TTC
+                                               ########################################
+                                               if( Ahat.countContiguousStrideOneElements() < self.arch.cacheLineSize ):
+                                                   # We only test the non-packed tensor because the size of the _entire_ 
+                                                   # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
+                                                   print WARNING + "WARNING: packing of A will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Ahat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
+                                                   print "    "+ str(Ahat) + " -> " + str(Atilde) + ENDC
+                                               (transposeNameA, bandwidthA, permA, sizeA, lda, ldaOut) = generateTranspose(Ahat,
+                                                       Atilde,
+                                                       self.floatType, 1.0,
+                                                       0.0, self.numThreads,
+                                                       0, 1, 0,
+                                                       self.arch.architectureName,
+                                                       self.generateOnly, 0)
+                                               if( Bhat.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
+                                                   # We only test the non-packed tensor because the size of the _entire_ 
+                                                   # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
+                                                   print WARNING + "WARNING: packing of B will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Bhat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
+                                                   print "    "+ str(Bhat) + " -> " + str(Btilde) + ENDC
+                                               (transposeNameB, bandwidthB, permB, sizeB, ldb, ldbOut) = generateTranspose(Bhat,
+                                                       Btilde,
+                                                       self.floatType, 1.0,
+                                                       0.0, self.numThreads,
+                                                       0, 1, 0,
+                                                       self.arch.architectureName,self.generateOnly, 0)
+                                               if( ChatMicro.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
+                                                   # We only test the non-packed tensor because the size of the _entire_ 
+                                                   # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
+                                                   print WARNING + "WARNING: packing of C will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(ChatMicro.countContiguousStrideOneElements(), self.arch.cacheLineSize)
+                                                   print "    " + str(microTileC) + " -> " + str(ChatMicro) + ENDC
+                                               (transposeNameC, bandwidthC, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
+                                                       ChatMicro,
+                                                       self.floatType,
+                                                       self.alpha, 1.0,
+                                                       self.numThreads, 1,
+                                                       0, 0,
+                                                       self.arch.architectureName,self.generateOnly, 0)
+                                               (transposeNameC_bz, bandwidthC_bz, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
+                                                       ChatMicro,
+                                                       self.floatType,
+                                                       self.alpha, 0.0,
+                                                       self.numThreads, 1,
+                                                       0, 0,
+                                                       self.arch.architectureName,self.generateOnly, 0)
+
+                                               # include headers
+                                               code = "#include \"ttc_transpositions/%s.h\"\n"%transposeNameC 
+                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameC_bz 
+                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameA
+                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameB
+                                               code += "#include <immintrin.h>\n"
+                                               code += "#include <stdlib.h>\n"
+                                               code += "#include <stdio.h>\n"
+                                               if( self.useTimings ):
+                                                   code += "#include <omp.h>\n"
+
+                                               code += "#define MR (%d)\n"%mr
+                                               code += "#define NR (%d)\n"%nr
+                                               code += "#define MC1 (%d)\n"%mc1
+                                               code += "#define NC1 (%d)\n"%nc1
+                                               code += "#define MC (%d)\n"%mc
+                                               code += "#define NC (%d)\n"%nc
+                                               code += "#define KC (%d)\n"%kc
+                                               code += "\n"
+
+                                               if( self.useTimings ):
+                                                   code += "static double time_pack_a;\n"
+                                                   code += "static double bytes_pack_a;\n"
+                                                   code += "static double time_pack_b;\n"
+                                                   code += "static double bytes_pack_b;\n"
+                                                   code += "static double time_pack_c;\n"
+                                                   code += "static double bytes_pack_c;\n"
+
+                                               ###############################
+                                               # emit micro kernels
+                                               ###############################
+                                               code += self.getMicroKernel(mc, mc1, nc, nc1, mr, nr, ChatMicro, mIndL1, nIndL1 )
+                                               code += "\n"
+
+                                               ###############################
+                                               # emit macro kernels
+                                               ###############################
+                                               macroVariant = ""
+                                               for token in variant:
+                                                   if( token[0:6] == "kernel" ):
+                                                       macroVariant = token[7:].split("_")
+                                                       break
+                                               if( macroVariant == "" ):
+                                                   print "[TTC] ERROR: macro variant could not be decoded."
+                                                   exit(0)
+                                               code += self.getMacroKernel(mc, mc1,
+                                                     nc, nc1, macroVariant,
+                                                     Chat, microTileC,Atilde, Btilde,
+                                                     mIndRemainder,
+                                                     nIndRemainder)
+                                               ##############################
+
+                                               key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, tensorA3.getIndexStr() +"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr())
+                                               gettName = self.getName(key)
+                                               if( len(fastestKey) > 0 ): 
+                                                   gettName = "gett"
+                                               code += self.getHeader(gettName) + "\n{\n"
                                                
-                                                   # extract Sub-tensors A and B
-                                                   indAhat = mIndHat + kIndHat 
-                                                   indBhat = nIndHat + kIndHat
-                                                   indChat = mIndHat + nIndHat
-                                                   Ahat = tensorA3.getSubTensor(indAhat) # non-packed subtensor, see paper
-                                                   Bhat = tensorB3.getSubTensor(indBhat) # non-packed subtensor, see paper
-                                                   Chat = tensorC4.getSubTensor(indChat) # non-packed 4D subtensor
-                                                   ChatMicro = Chat.getSubTensor(mIndL1 + nIndL1) # non-packed 2D subtensor
-                                               
-                                                   indAtilde = mIndL1 + kIndHat + mIndRemainder
-                                                   indBtilde = nIndL1 + kIndHat + nIndRemainder
-                                                   indABtilde = mIndL1 + nIndL1# + mIndRemainder + nIndRemainder
-                                               
-                                                   Atilde  = Tensor("A~",  indAtilde)  #packed subtensor, see paper
-                                                   Btilde  = Tensor("B~",  indBtilde)  #packed subtensor, see paper
-                                                   ABtilde = Tensor("AB~", indABtilde) #packed subtensor, see paper
-                                                   microTileC = Tensor("Cmicro",mIndL1 + nIndL1) # packed 2D subtensor
-                                                                                                 # The macro-kernel iterates over Chat in steps of the microTileC
-                                               
-                                                   ########################################
-                                                   # generate Transpositions using TTC
-                                                   ########################################
-                                                   permA = tccg_util.getPerm(Ahat, Atilde)
-                                                   permB = tccg_util.getPerm(Bhat, Btilde)
-                                                   permC = tccg_util.getPerm(ABtilde, Chat)
+                                               tmpCode = self.declareVariables()
+                                               code += tmpCode
 
-                                                   key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr)# tensorA3.getIndexStr(), tensorB3.getIndexStr(), tensorC4.getIndexStr())
-                                                   indicesStr = tensorA3.getIndexStr()+"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr()
-                                                   if( len(fastestKey) > 0 ): # fastestKey has been provided
-                                                       if( variant_id != fastestKey[0]
-                                                        or mc != fastestKey[1]
-                                                        or nc != fastestKey[2]
-                                                        or kc != fastestKey[3]
-                                                        or mc1 != fastestKey[4]
-                                                        or nc1 != fastestKey[5]
-                                                        or mr != fastestKey[6]
-                                                        or nr != fastestKey[7]
-                                                        or indicesStr != fastestKey[8]):
-                                                           continue
-                                                   estFlops = self.estimateGFLOPS(mc, nc, kc, mc1, nc1, mr, nr, permA, permB, permC, variant)
-                                                   if( estimatedGflops.has_key(key) ): 
-                                                       estimatedGflops[key] = max(estimatedGflops[key], estFlops) #only consider the best-rated permutation per variant
-                                                   else:
-                                                       estimatedGflops[key] = estFlops
-                                                   if( estFlops < estimatedGflops[key] or done.has_key(key) ): # only consider the best-rated permutation per variant, this helps to sample the 
-                                                      continue                              # search space in a coarser fashion and avoids to sample very similar candidates redundantly.
+                                               ###############################
+                                               # Generate M, N and K Loops as well as packing routines
+                                               ###############################
+                                               code += "   //%s <- %s %s\n"%(tensorC4, tensorA3, tensorB3)
+                                               tmpCode = self.decodeVariant(variant,
+                                                     mInd0, mInd1, mIndRemainder,
+                                                     nInd0, nInd1, nIndRemainder,
+                                                     kInd0, kInd1,
+                                                     transposeNameA,
+                                                     transposeNameB,
+                                                     "",
+                                                     "",
+                                                     tensorA3, tensorB3,
+                                                     tensorC4, kc, 
+                                                     sizeA, lda, ldaOut, 
+                                                     sizeB, ldb, ldbOut, 
+                                                     sizeC, ldc, ldcOut,
+                                                     Ahat, Bhat, Chat)
+                                               code += tmpCode
 
-                                                   maxImpl = min(self.maxImplementations-1, len(sortedEstimatedGflops)-1)
-                                                   if( estimate_or_generate == 0 or estimatedGflops[key] < sortedEstimatedGflops[maxImpl] or self.numImpl >= self.maxImplementations):
-                                                      continue; #skip the code generation process in the first phase (we first estimate the performance)
+                                               ####################################
+                                               # print to file
+                                               ####################################
+                                               codeHpp += self.getHeader(gettName) + ";\n"
+                                               fgett = open("gett%d.cpp"%self.numImpl,"w")
+                                               fgett.write(code)
+                                               fgett.close()
 
-                                                   done[key] = 1
+                                               if( self.implementations.has_key(key) ):
+                                                   self.implementations[key].append((gettName,estFlops))
+                                               else:
+                                                   self.implementations[key] = [(gettName,estFlops)]
 
-                                                   #print "var: %d mc: %d, nc: %d, kc: %d, nc1: %d %f"%(variant_id,mc,nc,kc,nc1, estimatedGflops )
-                                               
-                                                   ########################################
-                                                   # generate Transpositions using TTC
-                                                   ########################################
-                                                   if( Ahat.countContiguousStrideOneElements() < self.arch.cacheLineSize ):
-                                                       # We only test the non-packed tensor because the size of the _entire_ 
-                                                       # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
-                                                       print WARNING + "WARNING: packing of A will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Ahat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
-                                                       print "    "+ str(Ahat) + " -> " + str(Atilde) + ENDC
-                                                   (transposeNameA, bandwidthA, permA, sizeA, lda, ldaOut) = generateTranspose(Ahat,
-                                                           Atilde,
-                                                           self.floatType, 1.0,
-                                                           0.0, self.numThreads,
-                                                           0, 1, 0,
-                                                           self.arch.architectureName,
-                                                           self.generateOnly, 0)
-                                                   if( Bhat.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
-                                                       # We only test the non-packed tensor because the size of the _entire_ 
-                                                       # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
-                                                       print WARNING + "WARNING: packing of B will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Bhat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
-                                                       print "    "+ str(Bhat) + " -> " + str(Btilde) + ENDC
-                                                   (transposeNameB, bandwidthB, permB, sizeB, ldb, ldbOut) = generateTranspose(Bhat,
-                                                           Btilde,
-                                                           self.floatType, 1.0,
-                                                           0.0, self.numThreads,
-                                                           0, 1, 0,
-                                                           self.arch.architectureName,self.generateOnly, 0)
-                                                   if( ChatMicro.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
-                                                       # We only test the non-packed tensor because the size of the _entire_ 
-                                                       # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
-                                                       print WARNING + "WARNING: packing of C will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(ChatMicro.countContiguousStrideOneElements(), self.arch.cacheLineSize)
-                                                       print "    " + str(microTileC) + " -> " + str(ChatMicro) + ENDC
-                                                   (transposeNameC, bandwidthC, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
-                                                           ChatMicro,
-                                                           self.floatType,
-                                                           self.alpha, 1.0,
-                                                           self.numThreads, 1,
-                                                           0, 0,
-                                                           self.arch.architectureName,self.generateOnly, 0)
-                                                   (transposeNameC_bz, bandwidthC_bz, permC, sizeC, ldc, ldcOut) = generateTranspose(microTileC,
-                                                           ChatMicro,
-                                                           self.floatType,
-                                                           self.alpha, 0.0,
-                                                           self.numThreads, 1,
-                                                           0, 0,
-                                                           self.arch.architectureName,self.generateOnly, 0)
-
-                                                   # include headers
-                                                   code = "#include \"ttc_transpositions/%s.h\"\n"%transposeNameC 
-                                                   code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameC_bz 
-                                                   code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameA
-                                                   code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameB
-                                                   code += "#include <immintrin.h>\n"
-                                                   code += "#include <stdlib.h>\n"
-                                                   code += "#include <stdio.h>\n"
-                                                   if( self.useTimings ):
-                                                       code += "#include <omp.h>\n"
-
-                                                   code += "#define MR (%d)\n"%mr
-                                                   code += "#define NR (%d)\n"%nr
-                                                   code += "#define MC1 (%d)\n"%mc1
-                                                   code += "#define NC1 (%d)\n"%nc1
-                                                   code += "#define MC (%d)\n"%mc
-                                                   code += "#define NC (%d)\n"%nc
-                                                   code += "#define KC (%d)\n"%kc
-                                                   code += "\n"
-
-                                                   if( self.useTimings ):
-                                                       code += "static double time_pack_a;\n"
-                                                       code += "static double bytes_pack_a;\n"
-                                                       code += "static double time_pack_b;\n"
-                                                       code += "static double bytes_pack_b;\n"
-                                                       code += "static double time_pack_c;\n"
-                                                       code += "static double bytes_pack_c;\n"
-
-                                                   ###############################
-                                                   # emit micro kernels
-                                                   ###############################
-                                                   code += self.getMicroKernel(mc, mc1, nc, nc1, mr, nr)
-                                                   code += "\n"
-
-                                                   ###############################
-                                                   # emit macro kernels
-                                                   ###############################
-                                                   macroVariant = ""
-                                                   for token in variant:
-                                                       if( token[0:6] == "kernel" ):
-                                                           macroVariant = token[7:].split("_")
-                                                           break
-                                                   if( macroVariant == "" ):
-                                                       print "[TTC] ERROR: macro variant could not be decoded."
-                                                       exit(0)
-                                                   code += self.getMacroKernel(mc, mc1,
-                                                         nc, nc1, macroVariant,
-                                                         Chat, microTileC,Atilde, Btilde,
-                                                         mIndRemainder,
-                                                         nIndRemainder,transposeNameC_bz,transposeNameC,
-                                                         sizeC, ldc, ldcOut)
-                                                   ##############################
-
-                                                   key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, tensorA3.getIndexStr() +"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr())
-                                                   gettName = self.getName(key)
-                                                   if( len(fastestKey) > 0 ): 
-                                                       gettName = "gett"
-                                                   code += self.getHeader(gettName) + "\n{\n"
-                                                   
-                                                   tmpCode = self.declareVariables()
-                                                   code += tmpCode
-
-                                                   ###############################
-                                                   # Generate M, N and K Loops as well as packing routines
-                                                   ###############################
-                                                   code += "   //%s <- %s %s\n"%(tensorC4, tensorA3, tensorB3)
-                                                   tmpCode = self.decodeVariant(variant,
-                                                         mInd0, mInd1, mIndRemainder,
-                                                         nInd0, nInd1, nIndRemainder,
-                                                         kInd0, kInd1,
-                                                         transposeNameA,
-                                                         transposeNameB,
-                                                         "",
-                                                         "",
-                                                         tensorA3, tensorB3,
-                                                         tensorC4, kc, 
-                                                         sizeA, lda, ldaOut, 
-                                                         sizeB, ldb, ldbOut, 
-                                                         sizeC, ldc, ldcOut,
-                                                         Ahat, Bhat, Chat)
-                                                   code += tmpCode
-
-                                                   ####################################
-                                                   # print to file
-                                                   ####################################
-                                                   codeHpp += self.getHeader(gettName) + ";\n"
-                                                   fgett = open("gett%d.cpp"%self.numImpl,"w")
-                                                   fgett.write(code)
-                                                   fgett.close()
-
-                                                   if( self.implementations.has_key(key) ):
-                                                       self.implementations[key].append((gettName,estFlops))
-                                                   else:
-                                                       self.implementations[key] = [(gettName,estFlops)]
-
-                                                   counter += 1
-                                                   print "%d gett versions generated so far."%counter
-                                                   self.numImpl += 1
+                                               counter += 1
+                                               print "%d gett versions generated so far."%counter
+                                               self.numImpl += 1
 
        fgett = open("gett.hpp","w")
        fgett.write(codeHpp)
