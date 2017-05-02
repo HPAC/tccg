@@ -125,7 +125,7 @@ class Tccg:
         self.gett = Gett(self.A, self.B, self.C, self.alpha, self.beta,
                 self.args.numThreads, arch, self.floatType,
                 self.args.maxImplementations, self.args.useDynamicMemory,
-                self.args.fastMeasurements, self.args.generateOnly, self.args.useTimings )
+                self.args.fastMeasurements, self.args.generateOnly, self.args.useTimings, self.args.verbose )
         self.gemmLoop = GemmLoop(self.A, self.B, self.C, self.alpha, self.beta,
                 self.args.numThreads, self.floatType, arch, self.args.batchedGEMM, self.args.maxImplementationsLoG)
 

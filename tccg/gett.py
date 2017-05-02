@@ -17,8 +17,9 @@ ENDC = '\033[0m'
 class Gett:
     def __init__(self, A, B, C, alpha, beta,
                  numThreads, arch, floatType, 
-                 maxImplementations, useDynamicMemory, fast, generateOnly, useTimings ):
+                 maxImplementations, useDynamicMemory, fast, generateOnly, useTimings, verbose ):
 
+        self.verbose = verbose
         self.useTimings = useTimings
         self.generateOnly = generateOnly
         self.useDynamicMemory = useDynamicMemory  
@@ -603,13 +604,13 @@ class Gett:
             print "ERROR float type unknown"
             exit(-1)
 
-    def estimateGFLOPS(self, mc, nc, kc, mc1, nc1, mr, nr, permA, permB, permC, variant):
+    def estimateGFLOPS(self, mc, nc, kc, mc1, nc1, mr, nr, permA, Ahat, permB, Bhat, Chat, variant):
         # estimate transpose overhead
 
         numIter = {}
-        numIter['m'] = self.sizeM / mc
-        numIter['n'] = self.sizeN / nc
-        numIter['k'] = self.sizeK / kc
+        numIter['m'] = (self.sizeM+mc-1) / mc
+        numIter['n'] = (self.sizeN+nc-1) / nc
+        numIter['k'] = (self.sizeK+kc-1) / kc
         size = {}
         size['A'] = mc * kc
         size['B'] = nc * kc
@@ -617,7 +618,20 @@ class Gett:
         perm = {}
         perm ['A'] = permA
         perm ['B'] = permB
-        perm ['C'] = permC
+        perm ['C'] = [0] #TODO?!?
+        numContiguousElements = {}
+        numContiguousElements['A'] = Ahat.countContiguousStrideOneElements()
+        numContiguousElements['B'] = Bhat.countContiguousStrideOneElements()
+        numContiguousElements['C'] = Chat.countContiguousStrideOneElements()
+
+        vectorEfficiency = {}
+        vectorEfficiency['A'] = 1.0
+        vectorEfficiency['B'] = 1.0
+        vectorEfficiency['C'] = 1.0
+        if( Ahat.indices[0].size < self.arch.registerSize or Ahat.indices[permA[0]].size < self.arch.registerSize ):
+            vectorEfficiency['A'] = 0.95 # slightly penalize if it is not vectorizable
+        if( Bhat.indices[0].size < self.arch.registerSize or Bhat.indices[permB[0]].size < self.arch.registerSize ):
+            vectorEfficiency['B'] = 0.95 # slightly penalize if it is not vectorizable
 
         ##################################
         # estimate packing time
@@ -639,9 +653,10 @@ class Gett:
                 bytesMoved *= numIter[it]
 
             bandwidth = self.arch.axpyBandwidth * (1 - (len(perm) - 1) * 0.015 ) # slightly favor smaller dimensional transpositions
-            packingTimeTensor= bytesMoved / bandwidth
+            cachelineEfficiency = numContiguousElements[tensor] / (float((numContiguousElements[tensor] + self.arch.cacheLineSize - 1)  / self.arch.cacheLineSize) * self.arch.cacheLineSize)
+            packingTimeTensor = bytesMoved / (bandwidth  * cachelineEfficiency * vectorEfficiency[tensor])
             if( perm[tensor][0] != 0 ): # we assume that transpositions for which the first index does not change are more efficient
-                packingTimeTensor = bytesMoved / (bandwidth * 0.71) 
+                packingTimeTensor = bytesMoved / (bandwidth * 0.8 * cachelineEfficiency * vectorEfficiency[tensor]) 
 
             if( tensor == 'C' and self.beta != 0 ):
                 packingTime += 3 * packingTimeTensor 
@@ -729,10 +744,18 @@ class Gett:
                                           # if estimate_or_generate == 1 : generate code for the best x implementations
            sortedEstimatedGflops = []
            if( estimate_or_generate == 1 ):
+               count = 0
                for key in estimatedGflops:
+                   maxMC_NC_KC = key[1] * key[2] * key[3]
+                   for key2 in estimatedGflops:
+                       if( key[0] == key2[0] and estimatedGflops[key2] == estimatedGflops[key] ):
+                           maxMC_NC_KC = max(maxMC_NC_KC, key2[1] * key2[2] * key2[3])
+                   if( key[1] * key[2] * key[3] < maxMC_NC_KC ):
+                      estimatedGflops[key] = 0 # only keep those with largest macro kernel. Rationale: less l2 and l1 bandwidth
                    sortedEstimatedGflops.append(estimatedGflops[key])
+
                sortedEstimatedGflops.sort(reverse=True)
-               print "Total amount of GETT implementations: %d"%len(sortedEstimatedGflops)
+               print "Total amount of GETT implementations: %d"%(len(sortedEstimatedGflops))
 
            for variant_id in range(len(self.gemmVariants)):
                variant = self.gemmVariants[variant_id]
@@ -796,20 +819,20 @@ class Gett:
                                continue
            # 2) search for different permutations
                            # split indices to fit L2 cache
-                           splitsAC = splitIndexSet(copy.deepcopy(self.mInd), mc, self.A, self.C, self.arch.registerSize, True)
+                           splitsAC = splitIndexSet(copy.deepcopy(self.mInd), mc, self.A, True, self.C, True, self.arch.registerSize, True)
                            for (mInd0, mInd1, tensorA, tensorC) in splitsAC: #mInd0 is if size mc
-                               splitsBC = splitIndexSet(copy.deepcopy(self.nInd), nc, self.B, tensorC)
+                               splitsBC = splitIndexSet(copy.deepcopy(self.nInd), nc, self.B, True, tensorC, True)
                                for (nInd0, nInd1, tensorB, tensorC2) in splitsBC: #nInd0 is if size nc
-                                   splitsAB = splitIndexSet(copy.deepcopy(self.kInd), kc, tensorA, tensorB)
+                                   splitsAB = splitIndexSet(copy.deepcopy(self.kInd), kc, tensorA, True, tensorB, True)
                                    for (kInd0, kInd1, tensorA2, tensorB2) in splitsAB:
                                    
                                        # Split indices again to fit L1 cache and to achieve the desired BLIS-like packing format
-                                       splitsAC_L1 = splitIndexSet(copy.deepcopy(mInd0), mc1, tensorA2, tensorC2, self.arch.registerSize, True) 
+                                       splitsAC_L1 = splitIndexSet(copy.deepcopy(mInd0), mc1, tensorA2, False, tensorC2, True, self.arch.registerSize, True) 
                                        for (mIndL1, mIndRemainder, tensorA3, tensorC3) in splitsAC_L1:
-                                           splitsBC_L1 = splitIndexSet(copy.deepcopy(nInd0), nc1, tensorB2, tensorC3)
+                                           splitsBC_L1 = splitIndexSet(copy.deepcopy(nInd0), nc1, tensorB2, False, tensorC3, True)
                                            for (nIndL1, nIndRemainder, tensorB3, tensorC4) in splitsBC_L1:
 
-           # 3) generate current candidate/implementation
+                                               # 3) generate current candidate/implementation
                                                mIndHat = copy.deepcopy(mIndL1 + mIndRemainder) 
                                                nIndHat = copy.deepcopy(nIndL1 + nIndRemainder)
                                                kIndHat = copy.deepcopy(kInd0) 
@@ -832,24 +855,19 @@ class Gett:
                                                ABtilde = Tensor("AB~", indABtilde) #packed subtensor, see paper
                                                microTileC = Tensor("Cmicro",mIndL1 + nIndL1) # packed 2D subtensor
                                                                                              # The macro-kernel iterates over Chat in steps of the microTileC
-                                               #print microTileC 
-                                               #mstr = ""
-                                               #for x in mIndL1:
-                                               #    mstr += str(x) +", "
-                                               #mstr += "\n"
-                                               #for x in nIndL1:
-                                               #    mstr += str(x) +", "
-                                               #print mstr + "\n"
-
+                                               
                                                ########################################
                                                # generate Transpositions using TTC
                                                ########################################
                                                permA = tccg_util.getPerm(Ahat, Atilde)
                                                permB = tccg_util.getPerm(Bhat, Btilde)
-                                               permC = tccg_util.getPerm(ABtilde, Chat)
 
-                                               key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr)# tensorA3.getIndexStr(), tensorB3.getIndexStr(), tensorC4.getIndexStr())
+                                               
                                                indicesStr = tensorA3.getIndexStr()+"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr()
+                                               key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr)
+                                               neglectPermutations = 0 #TODO how much does this effect the perfomance
+                                               if( neglectPermutations ):
+                                                   key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr)
                                                if( len(fastestKey) > 0 ): # fastestKey has been provided
                                                    if( variant_id != fastestKey[0]
                                                     or mc != fastestKey[1]
@@ -861,11 +879,24 @@ class Gett:
                                                     or nr != fastestKey[7]
                                                     or indicesStr != fastestKey[8]):
                                                        continue
-                                               estFlops = self.estimateGFLOPS(mc, nc, kc, mc1, nc1, mr, nr, permA, permB, permC, variant)
-                                               if( estimatedGflops.has_key(key) ): 
+                                               estFlops = self.estimateGFLOPS(mc, nc, kc, mc1, nc1, mr, nr, permA, Ahat, permB, Bhat, Chat, variant)
+                                               if( neglectPermutations and estimatedGflops.has_key(key) ): 
                                                    estimatedGflops[key] = max(estimatedGflops[key], estFlops) #only consider the best-rated permutation per variant
                                                else:
                                                    estimatedGflops[key] = estFlops
+
+                                               if( estimate_or_generate ):# only keep those with largest macro kernel. Rationale: less l2 and l1 bandwidth
+                                                   maxMC_NC_KC = mc * nc * kc 
+                                                   for key2 in estimatedGflops:
+                                                       if( key[0] == key2[0] and estimatedGflops[key2] == estimatedGflops[key] ):
+                                                           maxMC_NC_KC = max(maxMC_NC_KC, key2[1] * key2[2] * key2[3])
+                                                   if( mc * nc * kc < maxMC_NC_KC ):
+                                                      estimatedGflops[key] = 0 
+
+                                               #if(variant_id == 1 and mc == (24 * 96) and kc == 192 and nc == 24):
+                                               #if( estimate_or_generate ):
+                                               
+
                                                if( estFlops < estimatedGflops[key] or done.has_key(key) ): # only consider the best-rated permutation per variant, this helps to sample the 
                                                   continue                              # search space in a coarser fashion and avoids to sample very similar candidates redundantly.
 
@@ -874,8 +905,12 @@ class Gett:
                                                   continue; #skip the code generation process in the first phase (we first estimate the performance)
 
                                                done[key] = 1
-
-                                               #print "var: %d mc: %d, nc: %d, kc: %d, nc1: %d %f"%(variant_id,mc,nc,kc,nc1, estimatedGflops )
+                                               if( self.verbose ):
+                                                   print "GFLOPS: ", estimatedGflops[key]
+                                                   print "   ",mc, nc, kc
+                                                   print "   ",Atilde,"<<<", Ahat,"<<<", tensorA3
+                                                   print "   ",Btilde,"<<<", Bhat,"<<<", tensorB3
+                                                   print "   ",Chat,"<<<", tensorC4
                                            
                                                ########################################
                                                # generate Transpositions using TTC
@@ -959,7 +994,8 @@ class Gett:
                                                      nIndRemainder)
                                                ##############################
 
-                                               key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, tensorA3.getIndexStr() +"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr())
+                                               key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr)
+                                               
                                                gettName = self.getName(key)
                                                if( len(fastestKey) > 0 ): 
                                                    gettName = "gett"

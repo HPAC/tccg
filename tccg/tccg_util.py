@@ -254,8 +254,8 @@ def generateTranspose(IN, OUT, floatType, alpha, beta, numThreads,
       print ttc_args.getCommandLineString()
       raise
 
-   if( generateOnly ):
-       print ttc_args.getCommandLineString()
+   #if( generateOnly ):
+       #print ttc_args.getCommandLineString()
    return (transposeName, bandwidth, ttc_args.getPerm(), ttc_args.getSize(), ttc_args.lda, ttc_args.ldb)
 
 def splitIndices(indices, pos, size):
@@ -410,6 +410,28 @@ def mergeIndicesWithSameLabel(l):
             newList.append(idx)
     return newList
 
+def list2str(l):
+    st = ""
+    for i in l:
+        st += str(i) + " "
+    return st
+
+def candidateExists(sol, candidates):
+    alreadyExists = False
+    for old in candidates:
+        equal = 1
+        for idxN in sol:
+            found = 0
+            for idxO in old:
+                if( idxO.size == idxN.size and idxO.label == idxN.label):
+                    found = 1
+                    break
+            if( not found ):
+                equal = 0
+        if(equal and len(old) == len(sol)):
+            alreadyExists = True
+            break
+    return alreadyExists
 
 def __getSolutions(primes, counts, indicesWithPrimeFactor, solutions):
     if( len (primes) == 0):
@@ -441,10 +463,12 @@ def __getSolutions(primes, counts, indicesWithPrimeFactor, solutions):
             idx0 = index(idx.label, p ** countOcc[idx.label])
             if( not idx0 in sol):
                 sol.append(idx0)
+        
 
-        if not sol in uniqueSolutions:
+        if not candidateExists(sol, uniqueSolutions):
             uniqueSolutions.append(sol)
-    #print "unique sol: "
+
+    #print "unique sol: ", p, counts[p]
     #for s in uniqueSolutions:
     #    print list2str(s)
     #print "----"
@@ -458,8 +482,13 @@ def __getSolutions(primes, counts, indicesWithPrimeFactor, solutions):
     newSolutions2 = []
     for s in newSolutions:
         s = mergeIndicesWithSameLabel(s)
-        if( not s in newSolutions2 ):
+        if( not candidateExists(s, newSolutions2)):
             newSolutions2.append(s)
+
+    #print "new sol: ", p, counts[p]
+    #for s in newSolutions2:
+    #    print list2str(s)
+    #print "----"
 
     #print "final sol: "
     #for s in newSolutions2:
@@ -485,7 +514,7 @@ def countRequiredSplits(subset, superset):
 # Note that I_1 may not just be a subset of I but it might be required to
 # split some indices of I to achieve the constraint Size(I_1) = size. Hence,
 # I = I_1 \union I_2 just resambles the rough idea of what's actually happening.
-def splitIndexSet(indices, size, tensorA, tensorB, registerSizeElements = 8,  BisImportant = False):
+def splitIndexSet(indices, size, tensorA, keepStride1A, tensorB, keepStride1B, registerSizeElements = 8,  BisImportant = False):
 
     primsMC = getPrimeFactors(size)
 
@@ -500,6 +529,8 @@ def splitIndexSet(indices, size, tensorA, tensorB, registerSizeElements = 8,  Bi
         indicesWithPrimfactor[p] = []
 
     for idx in indices:
+        if( not hasItem(indices, idx) ):
+            continue
         prims = getPrimeFactors(idx.size)
 
         for p in prims:
@@ -507,32 +538,21 @@ def splitIndexSet(indices, size, tensorA, tensorB, registerSizeElements = 8,  Bi
                 indicesWithPrimfactor[p].append(idx)
 
     # 1) get all candidates
+    # each candidate has a set of indices (from the original tensor) with sizes which might differ from the original tensor (if they do, we split them; see below)
     candidates = __getSolutions(list(set(primsMC)), count, indicesWithPrimfactor, [[]])
 
     # 2) remove all invalid candidates
     validCandidates = []
     # remove all candidates that are not valid (i.e., those which would require a non-unite stride for the packing)
     for candidate in candidates: 
-        if(( not hasItem(indices, tensorA.indices[0]) or hasItem(candidate, tensorA.indices[0])) and 
-           ( not hasItem(indices, tensorB.indices[0]) or hasItem(candidate, tensorB.indices[0])) ):
+        if(( not hasItem(indices, tensorA.indices[0]) or not keepStride1A or hasItem(candidate, tensorA.indices[0])) and 
+           ( not hasItem(indices, tensorB.indices[0]) or not keepStride1B or hasItem(candidate, tensorB.indices[0])) ):
             posB = findPosition(tensorB.indices[0], candidate)
             if( BisImportant and posB != -1 and candidate[posB].size % registerSizeElements  != 0 ):
                 continue # skip those candidates for which the accesses to C are not contiguous
             validCandidates.append(candidate)
 
-    # 3) select good candidates
-    minSplits = 10000000
-    goodCandidates = []
-    for s in validCandidates:
-        minSplits = min( minSplits, countRequiredSplits(s, indices) )
-
-    # only select candidates with the minimum number of splits => minimize the
-    # dimension of the resulting tensor
-    for s in validCandidates:
-        if countRequiredSplits(s, indices) == minSplits:
-            goodCandidates.append(s)
-
-    if( len( goodCandidates ) <= 0):
+    if( len( validCandidates ) <= 0):
         return []
         #raise NameError("It is not possible to find a subset of size mcL1 \
         #        (or ncL1) for the given set I_m (or I_n). Please choose a \
@@ -542,8 +562,10 @@ def splitIndexSet(indices, size, tensorA, tensorB, registerSizeElements = 8,  Bi
     ####### At this point we have good candidates available #########
     ################ We need to make a choice now ###################
 
-    solutions = []
-    for candidate in goodCandidates:
+    #for candidate in validCandidates:
+    #    print list2str(candidate)
+    solutions = [] 
+    for candidate in validCandidates:
         ind0 = []
         ind1 = []
         tensorAA = copy.deepcopy(tensorA)

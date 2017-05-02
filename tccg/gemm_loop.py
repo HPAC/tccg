@@ -323,7 +323,7 @@ class GemmLoop:
             gemmSize = m_size * n_size * k_size
             maxGemmSize = max( maxGemmSize, gemmSize)
 
-        maxBatchSize = 0
+        maxBatchSize = -1
         for candidate in self.candidates:
             batcheSize = self.candidates[candidate][0]
             m_size = self.candidates[candidate][1]
