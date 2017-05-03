@@ -865,7 +865,7 @@ class Gett:
                                                
                                                indicesStr = tensorA3.getIndexStr()+"_"+ tensorB3.getIndexStr()+"_"+ tensorC4.getIndexStr()
                                                key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr)
-                                               neglectPermutations = 0 #TODO how much does this effect the perfomance
+                                               neglectPermutations = 1 #TODO how much does this effect the perfomance
                                                if( neglectPermutations ):
                                                    key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr)
                                                if( len(fastestKey) > 0 ): # fastestKey has been provided
