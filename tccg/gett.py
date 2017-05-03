@@ -336,15 +336,15 @@ class Gett:
        code = "%sconst int M_ = %d;\n"%(indent,self.sizeM)
        code += "%sconst int N_ = %d;\n"%(indent,self.sizeN)
        code += "%sconst int K_ = %d;\n"%(indent,self.sizeK)
-       code += "%s%s *C_L2, *A_L2, *B_L2;\n"%(level*indent, self.floatType)
+       code += "%s%s *C_packed, *A_packed, *B_packed;\n"%(level*indent, self.floatType)
        pageSize = 4*1024 #4kb
        if( self.useDynamicMemory ):
            code += "%s%s *L2 = new %s[MC*NC + MC*KC + NC*KC];\n"%(level*indent,self.floatType,self.floatType)
        else:
            code += "%s%s L2[(MC*NC + MC*KC + NC*KC)] __attribute__((aligned(%d)));\n"%(level*indent,self.floatType,pageSize)
-       code += "%sC_L2 = L2;\n"%(level*indent)
-       code += "%sA_L2 = C_L2 + MC*NC;\n"%(level*indent) #TODO: alignment for each temporary array
-       code += "%sB_L2 = A_L2 + MC*KC;\n"%(level*indent)
+       code += "%sC_packed = L2;\n"%(level*indent)
+       code += "%sA_packed = C_packed + MC*NC;\n"%(level*indent) #TODO: alignment for each temporary array
+       code += "%sB_packed = A_packed + MC*KC;\n"%(level*indent)
        if( self.useTimings ):
            code += "%stime_pack_a = 0;\n"%(level*indent)
            code += "%sbytes_pack_a = 0;\n"%(level*indent)
@@ -380,9 +380,9 @@ class Gett:
            code += "%s,"%s
        code = code[:-1] + "};\n"
        if( scale ):
-           code += "%s%s<%s>(&A[%s], A_L2, alpha, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
+           code += "%s%s<%s>(&A[%s], A_packed, alpha, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
        else:
-           code += "%s%s<%s>(&A[%s], A_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
+           code += "%s%s<%s>(&A[%s], A_packed, 1.0, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
        if( self.useTimings ):
            code += "%stime_pack_a += omp_get_wtime() - start_;\n"%(level*indent)
            code += "%sbytes_pack_a += (MC * KC * %f);\n"%(level*indent,self.floatSize)
@@ -411,9 +411,9 @@ class Gett:
            code += "%s,"%s
        code = code[:-1] + "};\n"
        if( scale ):
-           code += "%s%s<%s>(&B[%s], B_L2, alpha, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
+           code += "%s%s<%s>(&B[%s], B_packed, alpha, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
        else:
-           code += "%s%s<%s>(&B[%s], B_L2, 1.0, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
+           code += "%s%s<%s>(&B[%s], B_packed, 1.0, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
        if( self.useTimings ):
            code += "%stime_pack_b += omp_get_wtime() - start_;\n"%(level*indent)
            code += "%sbytes_pack_b += (NC * KC * %f);\n"%(level*indent,self.floatSize)
@@ -533,11 +533,11 @@ class Gett:
                 code += "%s//%s <- %s %s\n"%(level*indent,Chat, Ahat, Bhat)
                 code += "%sif( ik_ == 0 )\n"%(level*indent)
                 code += "%sif( beta == 0 )\n"%((level+1)*indent)
-                code += "%smacroKernel<0, %d>(A_L2, B_L2, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
+                code += "%smacroKernel<0, %d>(A_packed, B_packed, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
                 code += "%selse\n"%((level+1)*indent)
-                code += "%smacroKernel<1, %d>(A_L2, B_L2, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
+                code += "%smacroKernel<1, %d>(A_packed, B_packed, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
                 code += "%selse\n"%(level*indent)
-                code += "%s   macroKernel<1, %d>(A_L2, B_L2, &C[%s],1.0);\n"%(level*indent, kc,offsetC)
+                code += "%s   macroKernel<1, %d>(A_packed, B_packed, &C[%s],1.0);\n"%(level*indent, kc,offsetC)
 
             elif ( token[0] == "}" and len(token) == 2 ): #closing braces
                 if( self.fastMeasurements and i == len(variant)-1 ):
@@ -907,6 +907,8 @@ class Gett:
                                                done[key] = 1
                                                if( self.verbose ):
                                                    print "GFLOPS: ", estimatedGflops[key]
+                                                   print "   ",variant
+                                                   print "   ",self.getName((variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr))
                                                    print "   ",mc, nc, kc
                                                    print "   ",Atilde,"<<<", Ahat,"<<<", tensorA3
                                                    print "   ",Btilde,"<<<", Bhat,"<<<", tensorB3

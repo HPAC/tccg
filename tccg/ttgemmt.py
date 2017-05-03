@@ -227,7 +227,8 @@ void %s(const char *transa, const char *transb,
                                                 self.numThreads, self.arch,
                                                 self.generateOnly, 1)
                                         codeblocks.append(transposeA)
-                                        tmpA = transposeA.OUT
+                                        if( self.useAsGEMM == 0 ):
+                                            tmpA = transposeA.OUT
                                         transposeTime += transposeA.getTransposeTime(self.arch.axpyBandwidth)
                                     # Transpose B
                                     if( B.transposeRequired( indicesB ) ):
@@ -236,7 +237,8 @@ void %s(const char *transa, const char *transb,
                                                 self.numThreads, self.arch,
                                                 self.generateOnly, 1)
                                         codeblocks.append(transposeB)
-                                        tmpB = transposeB.OUT
+                                        if( self.useAsGEMM == 0 ):
+                                            tmpB = transposeB.OUT
                                         transposeTime += transposeB.getTransposeTime(self.arch.axpyBandwidth)
 
                                     # GEMM
@@ -254,6 +256,9 @@ void %s(const char *transa, const char *transb,
                                         transposeC.setGenericBeta()
                                         codeblocks.append(transposeC)
                                         transposeTime += transposeC.getTransposeTime(self.arch.axpyBandwidth)
+                                        if( self.useAsGEMM != 0 ):
+                                            gemm.setBeta("beta")
+                                            gemm.renameOutput(self.C.label)
                                     else:
                                         gemm.setBeta("beta")
                                         gemm.renameOutput(self.C.label)
