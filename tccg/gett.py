@@ -336,14 +336,13 @@ class Gett:
        code = "%sconst int M_ = %d;\n"%(indent,self.sizeM)
        code += "%sconst int N_ = %d;\n"%(indent,self.sizeN)
        code += "%sconst int K_ = %d;\n"%(indent,self.sizeK)
-       code += "%s%s *C_packed, *A_packed, *B_packed;\n"%(level*indent, self.floatType)
+       code += "%s%s *A_packed, *B_packed;\n"%(level*indent, self.floatType)
        pageSize = 4*1024 #4kb
        if( self.useDynamicMemory ):
            code += "%s%s *L2 = new %s[MC*NC + MC*KC + NC*KC];\n"%(level*indent,self.floatType,self.floatType)
        else:
-           code += "%s%s L2[(MC*NC + MC*KC + NC*KC)] __attribute__((aligned(%d)));\n"%(level*indent,self.floatType,pageSize)
-       code += "%sC_packed = L2;\n"%(level*indent)
-       code += "%sA_packed = C_packed + MC*NC;\n"%(level*indent) #TODO: alignment for each temporary array
+           code += "%s%s L2[(MC*KC + NC*KC)] __attribute__((aligned(%d)));\n"%(level*indent,self.floatType,pageSize)
+       code += "%sA_packed = L2;\n"%(level*indent) #TODO: alignment for each temporary array
        code += "%sB_packed = A_packed + MC*KC;\n"%(level*indent)
        if( self.useTimings ):
            code += "%stime_pack_a = 0;\n"%(level*indent)
@@ -946,8 +945,12 @@ class Gett:
                                                    print WARNING + "WARNING: packing of C will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(ChatMicro.countContiguousStrideOneElements(), self.arch.cacheLineSize)
                                                    print "    " + str(microTileC) + " -> " + str(ChatMicro) + ENDC
 
+                                               code = "// "+str(Atilde)+ " <<< "+str(Ahat)+" <<< "+ str(tensorA3) + "\n"
+                                               code += "// "+str(Btilde)+ " <<< "+str(Bhat)+" <<< "+ str(tensorB3) + "\n"
+                                               code += "// "+str(Chat)+ " <<< "+str(tensorC4) + "\n\n"
+
                                                # include headers
-                                               code = "#include \"ttc_transpositions/%s.h\"\n"%transposeNameA
+                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameA
                                                code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameB
                                                code += "#include <immintrin.h>\n"
                                                code += "#include <stdlib.h>\n"
