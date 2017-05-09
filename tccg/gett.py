@@ -50,8 +50,8 @@ class Gett:
 
         # encode the loop-order and the position of the packing routines. (Leftmost == outermost loop)
         self.gemmVariants = [ 
-                ['n','k','B','m','A',"kernel_MC_NC_NC1",'C',"}m","}k","}n"], # panel-matrix
-                ['m','k','A','n','B',"kernel_NC_MC_NC1",'C',"}n","}k","}m"]  # matrix-panel
+                ['n','k','B','m','A',"kernel_NC_MC",'C',"}m","}k","}n"], # panel-matrix
+                ['m','k','A','n','B',"kernel_MC_NC",'C',"}n","}k","}m"]  # matrix-panel
                 ] 
         # this variant doesn't seem to be efficient (uncomment, if desired)
         # self.gemmVariants.append(['m','n','k','A','B',"kernel_NC_MC_NC1","}k",'C',"}n","}m"]) # panel-panel
@@ -242,17 +242,9 @@ class Gett:
            offsetC += preC + "in_ * NR * MC" 
            return ("NR", "in_", offsetA, offsetB, offsetC)
        elif( upperBound == "MC" ):
-           offsetA += preA + "im_ * MC1 * KC" 
-           offsetC += preC + "im_ * MC1 * NR" 
-           return ("MC1", "im_", offsetA, offsetB, offsetC)
-       elif( upperBound == "NC1" ):
-       #    offsetB += preB + "in1_ * NR" 
-       #    offsetC += preC #+ "in1_ * MC1" 
-           return ("NR", "in1_", offsetA, offsetB, offsetC)
-       elif( upperBound == "MC1" ):
-           offsetA += preA + "im1_ * MR" 
-           offsetC += preC + "im1_ * MR"
-           return ("MR", "im1_", offsetA, offsetB, offsetC)
+           offsetA += preA + "im_ * MR * KC" 
+           offsetC += preC + "im_ * MR * NR" 
+           return ("MR", "im_", offsetA, offsetB, offsetC)
        else:
            print "[TCC] ERROR: cannot decode upperbound:", upperBound
            exit(-1)
@@ -289,10 +281,6 @@ class Gett:
                if( loopVar == 'in_'):
                    code += self._declareNindices(level, indent, nIndRemainder)
 
-       #if( mc1 > self.mr ):
-       #    code += "%sfor( int im1_ = 0; im1_ < MC1; im1_+= MR ){\n"%(level*indent)
-       #    level += 1
-
        offsetC = C_hat.getOffset(nIndRemainder + mIndRemainder) # extract subtensor
 
        code += "%s// blocking for registers\n"%(level*indent)
@@ -305,8 +293,6 @@ class Gett:
        #    code += "%sbytes_pack_c += (%f);\n"%(level*indent,self.floatSize * mc1 * nc1)
        for upperBound in variant[1:]:
            (inc, loopVar, offsetA, offsetB, offsetC) = self._getIncAndLoop(upperBound, offsetA, offsetB, offsetC)
-           if( loopVar == 'in1_'):
-              continue #remove this loop!
            level -= 1
            code += "%s}\n"%(level*indent)
 
@@ -960,8 +946,6 @@ class Gett:
 
                                                code += "#define MR (%d)\n"%mr
                                                code += "#define NR (%d)\n"%nr
-                                               code += "#define MC1 (%d)\n"%mc1
-                                               code += "#define NC1 (%d)\n"%nc1
                                                code += "#define MC (%d)\n"%mc
                                                code += "#define NC (%d)\n"%nc
                                                code += "#define KC (%d)\n"%kc
