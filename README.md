@@ -23,8 +23,7 @@ Current version: **v0.1.1**
     * Transpose-Transpose-GEMM-Transpose (TTGT)
     * Loops-over-GEMM (LoG)
 * Shared-memory parallelism
-    * Work in progress: GETT
-    * Fully supported: TTGT, LoG
+    * TTGT, LoG, GETT
 * Support for single- and double-precision
 * Auto-Fine-Tuning:
     * Automatically explores a search space of promising implementation candidates
@@ -52,11 +51,11 @@ For further information, please see our [(paper)](https://arxiv.org/abs/1607.001
 # Requirements
 --------------
 
-In order to use TCCG, a working C compiler and some BLAS library (e.g., Intel's MKL) as well as the [Tensor Transposition Compiler](https://github.com/HPAC/TTC) (TTC) are required:
+In order to use TCCG, a working C compiler and some BLAS library (e.g., Intel's MKL) as well as the [High-Perfromance Tensor Transposition](https://github.com/springer13/HPTT) library (HPTT) are required:
 
 * Intel's ICC (>= v15.0, recommended) or g++ (>= v4.8, experimental) 
 * Some BLAS library (e.g., [BLIS](https://github.com/flame/blis), [ATLAS](http://math-atlas.sourceforge.net/))
-* Tensor Transposition Compiler
+* High-Performance Tensor Transposition (HPTT) library  
 * Python (tested with v2.7.5 and v2.7.9)
 
 
@@ -145,8 +144,9 @@ article [(pdf)](https://arxiv.org/abs/1607.00145):
 
 # Changelog
 -----------
-V0.1.1:
-   * Improved performance for TTGT (based on improvements to [TTC](https://github.com/HPAC/TTC))
+V0.2.0:
+   * GETT is now also parallelized
+   * this branch now uses the [High-Perfromance Tensor Transposition](https://github.com/springer13/HPTT) library (HPTT) which significantly reduces the compile time
 
 # Feedback & Contributions
 -----------

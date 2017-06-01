@@ -33,8 +33,11 @@ class avx2:
 
         self.frequency = 2.5
         self.numFMAcycle = 2
-        self.L1_SIZE = 32* 1024.
-        self.L2_SIZE = 256* 1024.
+        self.L1_SIZE = 32* 1024.   #private per core
+        self.L2_SIZE = 256* 1024.  #private per core
+        self.L3_SIZE = 2 * 30 * 1024 * 1024.   #shared among all cores #TODO NUMA domains
+        self.L3isShared = 1
+        self.L3isInclusive = 1
 
         self.L1_LATENCY = 7
         self.L1_ASSOCIATIVITY = 8
@@ -260,10 +263,13 @@ class avx512:
         self.numFMAcycle = 2
         self.L1_SIZE = 32* 1024.
         self.L2_SIZE = 512 * 1024.
+        self.L3_SIZE = 2 * 30 * 1024 * 1024.   #shared among all cores #TODO NUMA domains
 
         self.L1_LATENCY = 7
         self.L1_ASSOCIATIVITY = 8
         self.L2_ASSOCIATIVITY = 8
+        self.L3isShared = 1
+        self.L3isInclusive = 1
 
         self.packedPostfix = "ps"
         self.scalarPostfix = "ss"

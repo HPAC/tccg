@@ -240,10 +240,11 @@ class Tccg:
             self.gett.genCode()
         if( not self.args.noGEMM ):
             self.gemm.genCode(self.args.maxWorkspace)
-
+        self.genMemoryBroker()
         self.printMain(workspace)
 
         if( self.args.generateOnly ):
+            shutil.copyfile("../Makefile","./Makefile")
             return
         codeGenTime = time.time() - startTime
 
@@ -727,6 +728,60 @@ class Tccg:
 
         return cppCode
 
+    def genMemoryBroker(self):
+        code = "#pragma once\n"
+        code += "#include <stdlib.h>\n"
+        code += "#include <stdint.h>\n"
+        code += "class MemoryBroker {\n"
+        code += "   public:\n"
+        code += "      MemoryBroker();\n"
+        code += "\n"
+        code += "      void alloc( size_t size );\n"
+        code += "      char* requestMemory( size_t size );\n"
+        code += "      void reset();\n"
+        code += "      void release();\n"
+        code += "      bool isInit() const;\n"
+        code += "      uint64_t size() const;\n"
+        code += "\n"
+        code += "   private:\n"
+        code += "\n"
+        code += "      char *ptr;\n"
+        code += "      uint64_t totalSize;\n"
+        code += "      uint64_t currentOffset;\n"
+        code += "};\n"
+        f = open("memoryBroker.h","w")
+        f.write( code)
+        f.close()
+
+        code = "#include \"memoryBroker.h\"\n"
+        code += "      MemoryBroker::MemoryBroker() : ptr(nullptr), totalSize(0), currentOffset(0) {}\n"
+        code += "\n"
+        code += "      void MemoryBroker::alloc( size_t size )\n"
+        code += "      {\n"
+        code += "         posix_memalign((void**)&(this->ptr), 4096, size);\n"
+        code += "         this->totalSize = size;\n"
+        code += "         this->currentOffset = 0;\n"
+        code += "      }\n"
+        code += "      char* MemoryBroker::requestMemory( size_t size )\n"
+        code += "      {\n"
+        code += "         char* ret = &ptr[currentOffset];\n"
+        code += "         currentOffset += size;\n"
+        code += "         return ret;\n"
+        code += "      }\n"
+        code += "      void MemoryBroker::reset() { this->currentOffset = 0; }\n"
+        code += "\n"
+        code += "      void MemoryBroker::release() {\n"
+        code += "         free(this->ptr);\n"
+        code += "         this->totalSize = 0;\n"
+        code += "         this->currentOffset = 0;\n"
+        code += "      }\n"
+        code += "\n"
+        code += "      bool MemoryBroker::isInit() const { return totalSize != 0; }\n"
+        code += "      uint64_t MemoryBroker::size() const { return totalSize; }\n"
+        f = open("memoryBroker.cpp","w")
+        f.write( code)
+        f.close()
+
     def printMain(self, workspace):
        code = ""
        if( self.gett.numImpl > 0 ):
@@ -747,6 +802,8 @@ class Tccg:
        code += "#include <stdio.h>\n"
        code += "#include <float.h>\n"
        code += "\n"
+       code += "#include \"memoryBroker.h\"\n"
+       code += "MemoryBroker memBroker;\n"
        code += self.getTrashCache(1)
        
        f = open("trash.cpp","w")
@@ -832,7 +889,7 @@ class Tccg:
             sizeC += "sizeC[%d]"%i
             if( i != len(self.C.indices) -1 ):
                 sizeC += "*"
-       code +="   int largerThanL3 = 1024*1024*42/sizeof(%s); //42MB \n"%(self.floatType)
+       code +="   int largerThanL3 = 1024*1024*128/sizeof(%s); //128MB \n"%(self.floatType)
        code +="   int ret = posix_memalign((void**) &trash1, %d, sizeof(%s) * largerThanL3);\n"%(self.alignmentRequirement, self.floatType)
        code +="   ret += posix_memalign((void**) &work_, %d, %d);\n"%(self.alignmentRequirement, workspace)
        code +="   ret += posix_memalign((void**) &trash2, %d, sizeof(%s) * largerThanL3);\n"%(self.alignmentRequirement, self.floatType)
@@ -851,12 +908,15 @@ class Tccg:
            code +="   cublasCreate(&cublas_handle);\n"
 
        code += "   //initialize A\n"
+       code +="   #pragma omp parallel for\n"
        code += "   for(size_t i=0;i < %s; ++i)\n"%sizeA
        code += "      A[i] = ((float)(10 + ((i+1)*17)%100))/110.0;\n"
        code += "   //initialize B\n"
+       code +="   #pragma omp parallel for\n"
        code += "   for(size_t i=0;i < %s; ++i)\n"%sizeB
        code += "      B[i] = ((float)(10 + ((i+2)*3)%100))/110.0;\n"
        code += "   //initialize A\n"
+       code +="   #pragma omp parallel for\n"
        code += "   for(size_t i=0;i < %s; ++i){\n"%sizeC
        code += "      C[i] = ((float)(10 + ((i+3)*13)%100))/110.0;\n"
        code += "      C_ref[i] = C[i];\n"
@@ -1089,7 +1149,10 @@ class Tccg:
        fgett.close()
 
     def getFlopCount(self):
-       return (self.fmul + self.fadd) * self.sizeM * self.sizeN * self.sizeK + (2. * self.fmul + self.fadd) * self.sizeM * self.sizeN
+        if(self.beta != 0):
+           return (self.fmul + self.fadd) * self.sizeM * self.sizeN * self.sizeK + (2. * self.fmul + self.fadd) * self.sizeM * self.sizeN
+        else:
+           return (self.fmul + self.fadd) * self.sizeM * self.sizeN * self.sizeK
 
 def createTmpDirectory():
     directory = "tmp"

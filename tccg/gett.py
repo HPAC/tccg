@@ -246,7 +246,7 @@ class Gett:
            offsetC += preC + "im_ * MR * NR" 
            return ("MR", "im_", offsetA, offsetB, offsetC)
        else:
-           print "[TCC] ERROR: cannot decode upperbound:", upperBound
+           print "[TCCG] ERROR: cannot decode upperbound:", upperBound
            exit(-1)
 
     #at this point A is already packed in column-major format: mc x kc 
@@ -261,25 +261,28 @@ class Gett:
 
        level = 1
        code = "template<int update, int kc>\n"
-       code += "static void macroKernel(const %s *A, const %s *B, %s *C, %s beta)\n"%(self.floatType,self.floatType,self.floatType,self.floatType)
+       code += "static void macroKernel(const %s *A, const %s *B, %s *C, %s beta, const int startOuter, const int endOuter, const int startInner, const int endInner)\n"%(self.floatType,self.floatType,self.floatType,self.floatType)
        code += "{\n"
        code += "%s//updating %s <- %s %s\n"%(level*indent, C_hat,Atilde, Btilde)
 
-       if(self.numThreads > 1):
-          code += "#pragma omp parallel for collapse(2)\n"
+       isOuter = True
        for upperBound in variant:
            (inc, loopVar, offsetA, offsetB, offsetC) = self._getIncAndLoop(upperBound, offsetA, offsetB, offsetC)
-           if( loopVar == 'in1_'):
-              continue #remove this loop!
-              #code += "%s%s C_reg[%d] __attribute__((aligned(%d)));\n"%(level*indent, self.floatType, mc1 * nc1,4096)
 
-           code += "%sfor( int %s = 0; %s < (%s/%s); %s ++){\n"%(level*indent, loopVar, loopVar, upperBound, inc, loopVar)
+           start = "startOuter"
+           end = "endOuter"
+           if( not isOuter ):
+               start = "startInner"
+               end = "endInner"
+           else:
+               isOuter = False
+
+           code += "%sfor( int %s = %s; %s < %s; %s++){\n"%(level*indent, loopVar, start, loopVar, end, loopVar)
            level += 1
-           if(self.numThreads == 1): 
-               if( loopVar == 'im_'):
-                   code += self._declareMindices(level, indent, mIndRemainder)
-               if( loopVar == 'in_'):
-                   code += self._declareNindices(level, indent, nIndRemainder)
+           if( loopVar == 'im_'):
+               code += self._declareMindices(level, indent, mIndRemainder)
+           if( loopVar == 'in_'):
+               code += self._declareNindices(level, indent, nIndRemainder)
 
        offsetC = C_hat.getOffset(nIndRemainder + mIndRemainder) # extract subtensor
 
@@ -293,6 +296,8 @@ class Gett:
        #    code += "%sbytes_pack_c += (%f);\n"%(level*indent,self.floatSize * mc1 * nc1)
        for upperBound in variant[1:]:
            (inc, loopVar, offsetA, offsetB, offsetC) = self._getIncAndLoop(upperBound, offsetA, offsetB, offsetC)
+           if( loopVar == 'in1_'):
+              continue #remove this loop!
            level -= 1
            code += "%s}\n"%(level*indent)
 
@@ -322,14 +327,6 @@ class Gett:
        code = "%sconst int M_ = %d;\n"%(indent,self.sizeM)
        code += "%sconst int N_ = %d;\n"%(indent,self.sizeN)
        code += "%sconst int K_ = %d;\n"%(indent,self.sizeK)
-       code += "%s%s *A_packed, *B_packed;\n"%(level*indent, self.floatType)
-       pageSize = 4*1024 #4kb
-       if( self.useDynamicMemory ):
-           code += "%s%s *L2 = new %s[MC*NC + MC*KC + NC*KC];\n"%(level*indent,self.floatType,self.floatType)
-       else:
-           code += "%s%s L2[(MC*KC + NC*KC)] __attribute__((aligned(%d)));\n"%(level*indent,self.floatType,pageSize)
-       code += "%sA_packed = L2;\n"%(level*indent) #TODO: alignment for each temporary array
-       code += "%sB_packed = A_packed + MC*KC;\n"%(level*indent)
        if( self.useTimings ):
            code += "%stime_pack_a = 0;\n"%(level*indent)
            code += "%sbytes_pack_a = 0;\n"%(level*indent)
@@ -345,29 +342,22 @@ class Gett:
         return "void %s(%s * __restrict__ %s, %s * __restrict__ %s, %s * __restrict__ %s, const %s alpha, const %s beta)"%(
             name, self.floatType, self.A.label, self.floatType, self.B.label, self.floatType, self.C.label, self.floatType, self.floatType)
 
-    def packA(self, level, indent, mInd1, nInd1, kInd1, transposeName, tensorA, size, lda, ldb, scale):
+    def packA(self, level, indent, mInd1, nInd1, kInd1, tensorA, size, perm, lda, ldb, isOuter):
        offsetAk = tensorA.getOffset(mInd1 + kInd1) # extract subtensor
 
        code = "%s{ // pack A\n"%(level*indent)
        level+=1
        if( self.useTimings ):
            code += "%sdouble start_ = omp_get_wtime();\n"%(level*indent)
-       size_str = ""
-       for s in size:
-           size_str += "%d, "%s
-       size_str = size_str[:-2]
-       code += "%sint lda[] = {"%(indent * level)
-       for s in lda:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       code += "%sint ldb[] = {"%(indent * level)
-       for s in ldb:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       if( scale ):
-           code += "%s%s<%s>(&A[%s], A_packed, alpha, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
-       else:
-           code += "%s%s<%s>(&A[%s], A_packed, 1.0, lda, ldb);\n"%(level*indent,transposeName,size_str,offsetAk)
+
+       name = "Inner"
+       if( isOuter ):
+           name = "Outer"
+       code += "%smyPlan%s->setInputPtr(&A[%s]);\n"%(level*indent, name, offsetAk)
+       code += "%smyBarrier%s->synchronize();\n"%(level*indent, name)
+       code += "%smyPlan%s->execute_expert<false, false, true>();\n"%(level*indent, name)
+       code += "%smyBarrier%s->synchronize();\n"%(level*indent, name)
+
        if( self.useTimings ):
            code += "%stime_pack_a += omp_get_wtime() - start_;\n"%(level*indent)
            code += "%sbytes_pack_a += (MC * KC * %f);\n"%(level*indent,self.floatSize)
@@ -376,29 +366,22 @@ class Gett:
        return code
 
 
-    def packB(self, level, indent, mInd1, nInd1, kInd1, transposeName, tensorB, size, lda, ldb, scale):
+    def packB(self, level, indent, mInd1, nInd1, kInd1, tensorB, size, perm, lda, ldb, isOuter):
        offsetBk = tensorB.getOffset(nInd1 + kInd1) # extract subtensor
 
        code = "%s{ // pack B\n"%(level*indent)
        level+=1
        if( self.useTimings ):
            code += "%sdouble start_ = omp_get_wtime();\n"%(level*indent)
-       size_str = ""
-       for s in size:
-           size_str += "%d, "%s
-       size_str = size_str[:-2]
-       code += "%sint lda[] = {"%(indent * level)
-       for s in lda:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       code += "%sint ldb[] = {"%(indent * level)
-       for s in ldb:
-           code += "%s,"%s
-       code = code[:-1] + "};\n"
-       if( scale ):
-           code += "%s%s<%s>(&B[%s], B_packed, alpha, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
-       else:
-           code += "%s%s<%s>(&B[%s], B_packed, 1.0, lda, ldb);\n"%(level*indent,transposeName, size_str,offsetBk)
+       
+       name = "Inner"
+       if( isOuter ):
+           name = "Outer"
+       code += "%smyPlan%s->setInputPtr(&B[%s]);\n"%(level*indent, name, offsetBk)
+       code += "%smyBarrier%s->synchronize();\n"%(level*indent, name)
+       code += "%smyPlan%s->execute_expert<false, false, true>();\n"%(level*indent, name)
+       code += "%smyBarrier%s->synchronize();\n"%(level*indent, name)
+
        if( self.useTimings ):
            code += "%stime_pack_b += omp_get_wtime() - start_;\n"%(level*indent)
            code += "%sbytes_pack_b += (NC * KC * %f);\n"%(level*indent,self.floatSize)
@@ -406,11 +389,12 @@ class Gett:
        code += "%s}\n"%(level*indent)
        return code
 
-    def _pack(self, ABC, level, indent, protectUpdateC, mInd1, nInd1, kInd1, transposeNameA, transposeNameB, tensorA, tensorB, sizeA, lda, ldaOut, sizeB, ldb, ldbOut, scaleB):
+    def _pack(self, ABC, level, indent, protectUpdateC, mInd1, nInd1, kInd1, tensorA, tensorB, tensorC, 
+            sizeA, permA, lda, ldaOut, sizeB, permB, ldb, ldbOut, AisOuter):
       if( ABC == 'A'):
-         return self.packA(level, indent, mInd1, nInd1, kInd1, transposeNameA, tensorA, sizeA, lda, ldaOut, not scaleB)
+         return self.packA(level, indent, mInd1, nInd1, kInd1, tensorA, sizeA, permA, lda, ldaOut, AisOuter)
       elif( ABC == 'B'):
-         return self.packB(level, indent, mInd1, nInd1, kInd1, transposeNameB, tensorB, sizeB, ldb, ldbOut, scaleB)
+         return self.packB(level, indent, mInd1, nInd1, kInd1, tensorB, sizeB, permB, ldb, ldbOut, not AisOuter)
       elif( ABC == 'C'):
          return ""
       else:
@@ -440,9 +424,11 @@ class Gett:
               code += "%sint tmpIdx = ik_ / %d;\n"%(level*indent, kInd1[0].size)
           for i in range(1,len(kInd1)):
               idx = kInd1[i]
-              code += "%sconst int %s = tmpIdx %% %d;\n"%(level*indent, idx.label, idx.size)
-              if( i != len(kInd1) -1 ):
+              if( i != len(kInd1)-1):
+                  code += "%sconst int %s = tmpIdx %% %d;\n"%(level*indent, idx.label, idx.size)
                   code += "%stmpIdx = tmpIdx / %d;\n"%(level*indent,idx.size)
+              else:
+                  code += "%sconst int %s = tmpIdx;\n"%(level*indent, idx.label)
        return code
 
     def _declareNindices(self, level, indent, nInd1):
@@ -456,9 +442,11 @@ class Gett:
                code += "%sint tmpIdx = in_ / %d;\n"%(level*indent,nInd1[0].size)
            for i in range(1,len(nInd1)):
                idx = nInd1[i]
-               code += "%sconst int %s = tmpIdx %% %d;\n"%(level*indent,idx.label, idx.size)
-               if( i != len(nInd1) -1 ):
+               if( i != len(nInd1)-1):
+                   code += "%sconst int %s = tmpIdx %% %d;\n"%(level*indent,idx.label, idx.size)
                    code += "%stmpIdx = tmpIdx / %d;\n"%(level*indent,idx.size)
+               else:
+                   code += "%sconst int %s = tmpIdx;\n"%(level*indent,idx.label)
        return code
 
     def _declareMindices(self, level, indent, mInd1):
@@ -472,17 +460,27 @@ class Gett:
                code += "%sint tmpIdx = im_ / %d;\n"%(level*indent, mInd1[0].size)
            for i in range(1,len(mInd1)):
                idx = mInd1[i]
-               code += "%sconst int %s = tmpIdx %% %d;\n"%(level*indent, idx.label, idx.size)
-               if( i != len(mInd1) -1 ):
+               if( i != len(mInd1)-1):
+                   code += "%sconst int %s = tmpIdx %% %d;\n"%(level*indent, idx.label, idx.size)
                    code += "%stmpIdx = tmpIdx / %d;\n"%(level*indent,idx.size)
+               else:
+                   code += "%sconst int %s = tmpIdx;\n"%(level*indent, idx.label)
        return code
 
 
-    def generateLoop(self, mnk,level, indent):
+    def generateLoop(self, mnk,level, indent, AisOuter):
+      startIdx = 0
+      endIdx = 0
       if( mnk == 'm'):
-         code = "%sfor( int im_ = 0; im_ < (M_ / MC); ++im_ )\n%s{\n"%(level*indent,level*indent)
+         if( not AisOuter ):
+             startIdx = 1
+             endIdx = 1
+         code = "%sfor( int im_ = myStart[%d]; im_ < myEnd[%d]; ++im_ )\n%s{\n"%(level*indent,startIdx, endIdx, level*indent)
       elif( mnk == 'n'):
-         code = "%sfor( int in_ = 0; in_ < (N_ / NC); ++in_ )\n%s{\n"%(level*indent,level*indent)
+         if( AisOuter ):
+             startIdx = 1
+             endIdx = 1
+         code = "%sfor( int in_ = myStart[%d]; in_ < myEnd[%d]; ++in_ )\n%s{\n"%(level*indent,startIdx, endIdx, level*indent)
       elif( mnk == 'k'):
          code = "%sfor( int ik_ = 0; ik_ < (K_ / KC); ++ik_ )\n%s{\n"%(level*indent,level*indent)
       else:
@@ -492,8 +490,7 @@ class Gett:
       return code
 
     def decodeVariant(self, variant, mInd0, mInd1, mIndRemainder, nInd0, nInd1, nIndRemainder, kInd0, kInd1,
-          transposeNameA, transposeNameB,
-          tensorA, tensorB, tensorC, kc, sizeA, lda, ldaOut, sizeB, ldb,
+          tensorA, tensorB, tensorC, kc, sizeA, permA, lda, ldaOut, sizeB, permB, ldb,
           ldbOut, Ahat, Bhat, Chat ):
         code = ""
         level = 1
@@ -507,9 +504,8 @@ class Gett:
                 posC = variant.index("C")
                 protectUpdateC = posK > posC
                 code += self._pack(token[0], level, indent, protectUpdateC,
-                      mInd1, nInd1, kInd1, transposeNameA, transposeNameB,
-                      tensorA, tensorB,
-                      sizeA, lda, ldaOut, sizeB, ldb, ldbOut, variant[0] == 'n')
+                      mInd1, nInd1, kInd1, tensorA, tensorB,
+                      tensorC, sizeA, permA, lda, ldaOut, sizeB, permB, ldb, ldbOut, variant[0] == 'm' )
 
             elif ( token[0:6] == "kernel" ): # MacroKernel
                 posK = variant.index("}k")
@@ -518,11 +514,14 @@ class Gett:
                 code += "%s//%s <- %s %s\n"%(level*indent,Chat, Ahat, Bhat)
                 code += "%sif( ik_ == 0 )\n"%(level*indent)
                 code += "%sif( beta == 0 )\n"%((level+1)*indent)
-                code += "%smacroKernel<0, %d>(A_packed, B_packed, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
+                packedStr = "myPackedInner, myPackedOuter"
+                if( variant[0] == 'm' ):
+                    packedStr = "myPackedOuter, myPackedInner"
+                code += "%smacroKernel<0, %d>(%s, &C[%s], beta, myStart[2], myEnd[2], myStart[3], myEnd[3]);\n"%((level+2)*indent, kc, packedStr,offsetC)
                 code += "%selse\n"%((level+1)*indent)
-                code += "%smacroKernel<1, %d>(A_packed, B_packed, &C[%s],beta);\n"%((level+2)*indent, kc,offsetC)
+                code += "%smacroKernel<1, %d>(%s, &C[%s], beta, myStart[2], myEnd[2], myStart[3], myEnd[3]);\n"%((level+2)*indent, kc, packedStr,offsetC)
                 code += "%selse\n"%(level*indent)
-                code += "%s   macroKernel<1, %d>(A_packed, B_packed, &C[%s],1.0);\n"%(level*indent, kc,offsetC)
+                code += "%s   macroKernel<1, %d>(%s, &C[%s], 1.0, myStart[2], myEnd[2], myStart[3], myEnd[3]);\n"%(level*indent, kc, packedStr,offsetC)
 
             elif ( token[0] == "}" and len(token) == 2 ): #closing braces
                 if( self.fastMeasurements and i == len(variant)-1 ):
@@ -531,7 +530,7 @@ class Gett:
                 code += "%s} //%s\n"%(level*indent, token[1])
 
             else:                       # LOOPS
-                code += self.generateLoop(token ,level, indent) 
+                code += self.generateLoop(token ,level, indent, variant[0] == 'm') 
                 level+=1
                 code += self._declareIndices(token, level, indent, mInd1, nInd1, kInd1)
 
@@ -542,8 +541,6 @@ class Gett:
             code += "%sprintf(\"Packing A: %%f sec (%%.2f %%%%), %%f GiB/s.\\n\", time_pack_a, time_pack_a / total_time * 100, bytes_pack_a / 1024. /1024. / 1024. / time_pack_a);\n"%indent
             code += "%sprintf(\"Packing B: %%f sec (%%.2f %%%%), %%f GiB/s.\\n\", time_pack_b, time_pack_b / total_time * 100, bytes_pack_b / 1024. /1024. / 1024. / time_pack_b);\n"%indent
             #code += "%sprintf(\"Packing C: %%f sec (%%.2f %%%%), %%f GiB/s.\\n\", time_pack_c, time_pack_c / total_time * 100, bytes_pack_c / 1024. /1024. / 1024. / time_pack_c);\n"%indent
-        code += "} //gett\n"
-
         return code
 
     def getFastFlopsFromGettName(self, gettName):
@@ -699,6 +696,227 @@ class Gett:
             a -= 1 
         return allowedValues
 
+    def createTransposePlanA(self, size, perm, lda, ldb, level, scale):
+       indent = self.indent
+       code = "%sint permA[] = {"%(indent * level)
+       for s in perm:
+           code += "%d,"%s
+       code = code[:-1] + "};\n"
+       code += "%sint sizeA[] = {"%(indent * level)
+       for s in size:
+           code += "%d,"%s
+       code = code[:-1] + "};\n"
+       code += "%sint ldaA[] = {"%(indent * level)
+       for s in lda:
+           code += "%s,"%s
+       code = code[:-1] + "};\n"
+       code += "%sint ldbA[] = {"%(indent * level)
+       for s in ldb:
+           code += "%s,"%s
+       code = code[:-1] + "};\n"
+
+       if( scale ):
+           code += "%sint numThreadsOuter = numParallel[1] * numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sauto planOuter = hptt::create_plan( permA, %d, alpha, A, sizeA, ldaA, 0, NULL, ldbA, hptt::ESTIMATE, numThreadsOuter);\n"%(level*indent, len(size))
+       else:
+           code += "%sint numThreadsInner = numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sauto planInner = hptt::create_plan( permA, %d, 1.0, A, sizeA, ldaA, 0, NULL, ldbA, hptt::ESTIMATE, numThreadsInner);\n"%(level*indent, len(size))
+       return code
+
+
+    def createTransposePlanB(self, size, perm, lda, ldb, level, scale):
+       indent = self.indent
+       code = "%sint permB[] = {"%(indent * level)
+       for s in perm:
+           code += "%d,"%s
+       code = code[:-1] + "};\n"
+       code += "%sint sizeB[] = {"%(indent * level)
+       for s in size:
+           code += "%d,"%s
+       code = code[:-1] + "};\n"
+       code += "%sint ldaB[] = {"%(indent * level)
+       for s in lda:
+           code += "%s,"%s
+       code = code[:-1] + "};\n"
+       code += "%sint ldbB[] = {"%(indent * level)
+       for s in ldb:
+           code += "%s,"%s
+       code = code[:-1] + "};\n"
+
+       if( scale ):
+           code += "%sint numThreadsOuter = numParallel[1] * numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sauto planOuter = hptt::create_plan( permB, %d, alpha, B, sizeB, ldaB, 0, NULL, ldbB, hptt::ESTIMATE, numThreadsOuter);\n"%(level*indent, len(size))
+       else:
+           code += "%sint numThreadsInner = numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sauto planInner = hptt::create_plan( permB, %d, 1.0, B, sizeB, ldaB, 0, NULL, ldbB, hptt::ESTIMATE, numThreadsInner);\n"%(level*indent, len(size))
+       return code
+
+    def getParallelHelperCode(self):
+        code = "\n"
+        code += "extern MemoryBroker memBroker;\n"
+        code += "class Barrier \n"
+        code += "{\n"
+        code += "   public:\n"
+        code += "      Barrier() : numThreads(0), barrierSensed(false), barrierThreadsArrived(0) {}\n"
+        code += "\n"
+        code += "      void init( int numThreads)\n"
+        code += "      {\n"
+        code += "         this->numThreads = numThreads;\n"
+        code += "         this->barrierSensed = false;\n"
+        code += "         this->barrierThreadsArrived = 0;\n"
+        code += "      }\n"
+        code += "\n"
+        code += "      //barrier routine taken from art of multicore programming\n"
+        code += "      void synchronize()\n"
+        code += "      {\n"
+        code += "         if( this->numThreads == 1 )\n"
+        code += "            return;\n"
+        code += "         bool mySense = this->barrierSensed;\n"
+        code += "         int myThreadsArrived;\n"
+        code += "\n"
+        code += "#pragma omp atomic capture\n"
+        code += "         myThreadsArrived = ++(this->barrierThreadsArrived);\n"
+        code += "\n"
+        code += "         if ( myThreadsArrived == this->numThreads )\n"
+        code += "         {\n"
+        code += "            this->barrierThreadsArrived = 0;\n"
+        code += "            this->barrierSensed = !this->barrierSensed;\n"
+        code += "         }\n"
+        code += "         else\n"
+        code += "         {\n"
+        code += "            volatile bool* listener = &this->barrierSensed;\n"
+        code += "            while ( *listener == mySense ) {}\n"
+        code += "         }\n"
+        code += "      }\n"
+        code += "\n"
+        code += "   private:\n"
+        code += "      int  numThreads;\n"
+        code += "      bool barrierSensed;\n"
+        code += "      int  barrierThreadsArrived;\n"
+        code += "};\n"
+        code += "\n"
+        code += "static void getStartEnd( const int numTasks, const int numParallel, \n"
+        code += "                     const int threadIdPrevious, \n"
+        code += "                     const int numThreadsRemaining, \n"
+        code += "                     int &threadCommId, int &threadId, int &start, int &end)\n"
+        code += "{\n"
+        code += "   threadCommId = threadIdPrevious / numThreadsRemaining;  \n"
+        code += "   threadId = threadIdPrevious % numThreadsRemaining;\n"
+        code += "   const int numTasksPerThread = (numTasks + numParallel - 1 ) / numParallel;\n"
+        code += "   start = numTasksPerThread * threadCommId; \n"
+        code += "   end   = std::min(numTasks, numTasksPerThread * (threadCommId+1));\n"
+        code += "}\n"
+        code += "\n"
+        return code;
+
+    def getAllParallelismStrategies_(self, availableParallelism, primesToMatch, parallelismStrategies):
+        if( len(primesToMatch) == 0): 
+            return parallelismStrategies
+
+        parallelismStrategies__ = []
+        for p in primesToMatch:
+            parallelismStrategies_ = copy.deepcopy(parallelismStrategies)
+            for strat in parallelismStrategies:
+                for loop in range(len(strat)):
+                    if( availableParallelism[loop] / strat[loop] > 1 ):
+                        strat_ = copy.deepcopy(strat)
+                        strat_[loop] *= p
+                        if( not strat_ in parallelismStrategies_ ):
+                            parallelismStrategies_.append(strat_)
+            primesToMatch_ = copy.deepcopy(primesToMatch)
+            primesToMatch_.remove(p)
+            tmp = self.getAllParallelismStrategies_(availableParallelism, primesToMatch_, parallelismStrategies_ )
+            for strat in tmp:
+                if( not strat in parallelismStrategies__ ):
+                    parallelismStrategies__.append(strat)
+
+        return parallelismStrategies__
+
+    def getAllParallelismStrategies(self, availableParallelism):
+        primes = getPrimeFactors(self.numThreads)
+        primes.sort(reverse=True)
+        parallelismStrategies = [[1,1,1,1]]
+        return self.getAllParallelismStrategies_(availableParallelism, primes, parallelismStrategies )
+
+    def getLoadBalance(self, availableParallelism, parallelismStrategy):
+       loadBalance = 1.0
+       totalTasks = 1
+       for i in range(len(parallelismStrategy)):
+          loadBalance *= float(availableParallelism[i]) / ( ((availableParallelism[i]+parallelismStrategy[i]-1)/parallelismStrategy[i]) * parallelismStrategy[i] ) 
+          totalTasks *= parallelismStrategy[i]
+
+       #how well can these tasks be distributed among numThreads?
+       # e.g., totalTasks = 3, numThreads = 8 => 3./8
+       # e.g., totalTasks = 5, numThreads = 8 => 5./8
+       # e.g., totalTasks = 15, numThreads = 8 => 15./16
+       # e.g., totalTasks = 17, numThreads = 8 => 17./24
+       workDistribution = (float(totalTasks)) / (((totalTasks + self.numThreads - 1)/self.numThreads)*self.numThreads)
+
+       loadBalance *= workDistribution 
+       return 1./loadBalance 
+
+    def getParallelismStrategyCost(self, mc, nc, kc, mr, nr, AisOuter, availParallelism, parallelismStrategy):
+        paddedSizeOuter = ((mc * kc * self.floatSize + 63) / 64) * 64
+        paddedSizeInner = ((nc * kc * self.floatSize + 63) / 64) * 64
+        if( not AisOuter ):
+            paddedSizeOuter = ((nc * kc * self.floatSize + 63) / 64) * 64
+            paddedSizeInner = ((mc * kc * self.floatSize + 63) / 64) * 64
+
+        cost = 1.0 # optimum
+        l3size = self.arch.L3_SIZE
+        if( self.arch.L3isInclusive ):
+            l3size -= parallelismStrategy[0] * parallelismStrategy[1] * paddedSizeInner # the parallelismStrategy[0] factor could be avoided, but this puts more stress on the coherency protocol
+
+        if( parallelismStrategy[0] * paddedSizeOuter > 0.8 * l3size ): #make sure that every thing fits into cache
+            cost *= max(4.0, parallelismStrategy[0] * paddedSizeOuter / 0.8 / l3size)
+        
+        cost *= self.getLoadBalance(availParallelism, parallelismStrategy)
+
+        cost *= 1.065**(parallelismStrategy[-1]-1) # penalize parallelization of innermost loop around the micro-kernel. Rationale: load of sliver from L3 will be loaded redundantely by all threads
+        return cost
+
+
+    def getParallelismStrategy(self, mc, nc, kc, mr, nr, AisOuter):
+        """
+        Determines how the four loops should be parallelized
+        """
+
+        parallelizationStrategy = [1 for i in range(4)]
+        availParallelism = [1 for i in range(4)]
+        if(AisOuter):
+            availParallelism[0] = (self.sizeM + mc-1) / mc
+            availParallelism[1] = (self.sizeN + nc-1) / nc
+            availParallelism[2] = mc / mr
+            availParallelism[3] = nc / nr
+        else:
+            availParallelism[0] = (self.sizeN + nc-1) / nc
+            availParallelism[1] = (self.sizeM + mc-1) / mc
+            availParallelism[2] = nc / nr
+            availParallelism[3] = mc / mr
+
+        parallelismStragegies = self.getAllParallelismStrategies(availParallelism)
+        parallelismStragegies.sort(key=lambda strategy : self.getParallelismStrategyCost(mc, nc, kc, mr, nr, AisOuter, availParallelism, strategy))
+        #for p in parallelismStragegies:
+        #    print p, self.getParallelismStrategyCost(mc, nc, kc, mr, nr, AisOuter, availParallelism, p)
+
+        # we prefer to parallelize the third loop around the micro kernel (private copies in L2)
+        ret = "%sint parallelStrategyId = 0;\n"%(self.indent)
+        ret += "%sint numParallelStrategies[%d][4] = {\n"%(self.indent,min(8,parallelismStragegies))
+        for i in range(min(8,parallelismStragegies)):
+            tmp = ""
+            for a in parallelismStragegies[i]:
+                tmp += str(a) + ","
+            if i == min(8,parallelismStragegies) - 1:
+                ret += "%s   { %s } // cost = %f\n"%(self.indent, tmp[:-1], self.getParallelismStrategyCost(mc, nc, kc, mr, nr, AisOuter, availParallelism, parallelismStragegies[i]))
+                ret += "%s};\n"%self.indent
+            else:
+                ret += "%s   { %s }, // cost = %f\n"%(self.indent, tmp[:-1], self.getParallelismStrategyCost(mc, nc, kc, mr, nr, AisOuter, availParallelism, parallelismStragegies[i]))
+        ret += "%sauto parId = std::getenv(\"TCCG_STRATEGY\");\n"%(self.indent)
+        ret += "%sif( parId ) parallelStrategyId = std::min(std::max(0, atoi(parId)), %d);\n"%(self.indent, min(8,parallelismStragegies)-1)
+        ret += "%sint* numParallel = numParallelStrategies[parallelStrategyId];\n"%(self.indent)
+
+        return ret
+    
     def genCode(self, fastestKey = ()):
        ##############################################
        # This function generates all versions, unless 'fastestKey' is provided.
@@ -729,7 +947,6 @@ class Gett:
                                           # if estimate_or_generate == 1 : generate code for the best x implementations
            sortedEstimatedGflops = []
            if( estimate_or_generate == 1 ):
-               count = 0
                for key in estimatedGflops:
                    maxMC_NC_KC = key[1] * key[2] * key[3]
                    for key2 in estimatedGflops:
@@ -890,14 +1107,7 @@ class Gett:
                                                   continue; #skip the code generation process in the first phase (we first estimate the performance)
 
                                                done[key] = 1
-                                               if( self.verbose ):
-                                                   print "GFLOPS: ", estimatedGflops[key]
-                                                   print "   ",variant
-                                                   print "   ",self.getName((variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr))
-                                                   print "   ",mc, nc, kc
-                                                   print "   ",Atilde,"<<<", Ahat,"<<<", tensorA3
-                                                   print "   ",Btilde,"<<<", Bhat,"<<<", tensorB3
-                                                   print "   ",Chat,"<<<", tensorC4
+                                               
                                            
                                                ########################################
                                                # generate Transpositions using TTC
@@ -907,42 +1117,40 @@ class Gett:
                                                    # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
                                                    print WARNING + "WARNING: packing of A will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Ahat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
                                                    print "    "+ str(Ahat) + " -> " + str(Atilde) + ENDC
-                                               (transposeNameA, bandwidthA, permA, sizeA, lda, ldaOut) = generateTranspose(Ahat,
-                                                       Atilde,
-                                                       self.floatType, 1.0,
-                                                       0.0, self.numThreads,
-                                                       0, 1, 0,
-                                                       self.arch.architectureName,
-                                                       self.generateOnly, 0)
+                                               (permA, sizeA, lda, ldaOut) = generateTransposeHPTT(Ahat, Atilde)
                                                if( Bhat.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
                                                    # We only test the non-packed tensor because the size of the _entire_ 
                                                    # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
                                                    print WARNING + "WARNING: packing of B will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(Bhat.countContiguousStrideOneElements(), self.arch.cacheLineSize)
                                                    print "    "+ str(Bhat) + " -> " + str(Btilde) + ENDC
-                                               (transposeNameB, bandwidthB, permB, sizeB, ldb, ldbOut) = generateTranspose(Bhat,
-                                                       Btilde,
-                                                       self.floatType, 1.0,
-                                                       0.0, self.numThreads,
-                                                       0, 1, 0,
-                                                       self.arch.architectureName,self.generateOnly, 0)
+                                               (permB, sizeB, ldb, ldbOut) = generateTransposeHPTT(Bhat, Btilde)
+
                                                if( ChatMicro.countContiguousStrideOneElements() < self.arch.cacheLineSize ): 
                                                    # We only test the non-packed tensor because the size of the _entire_ 
                                                    # packed tensor is chosen such that it remains in cache anyway (i.e., spatial locality is fully exploited)
                                                    print WARNING + "WARNING: packing of C will be inefficient. Spatial locality has not been fully exploited: %d / %d"%(ChatMicro.countContiguousStrideOneElements(), self.arch.cacheLineSize)
                                                    print "    " + str(microTileC) + " -> " + str(ChatMicro) + ENDC
 
+                                               if( self.verbose ):
+                                                   print "GFLOPS: ", estimatedGflops[key]
+                                                   print "   ",variant
+                                                   print "   ",self.getName((variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr))
+                                                   print "   ",mc, nc, kc
+                                                   print "   ",Atilde,"<<<", Ahat,"<<<", tensorA3
+                                                   print "   ",Btilde,"<<<", Bhat,"<<<", tensorB3
+                                                   print "   ",Chat,"<<<", tensorC4
                                                code = "// "+str(Atilde)+ " <<< "+str(Ahat)+" <<< "+ str(tensorA3) + "\n"
                                                code += "// "+str(Btilde)+ " <<< "+str(Bhat)+" <<< "+ str(tensorB3) + "\n"
                                                code += "// "+str(Chat)+ " <<< "+str(tensorC4) + "\n\n"
-
                                                # include headers
-                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameA
-                                               code += "#include \"ttc_transpositions/%s.h\"\n"%transposeNameB
+                                               code += "#include <hptt.h>\n"
                                                code += "#include <immintrin.h>\n"
                                                code += "#include <stdlib.h>\n"
+                                               code += "#include <omp.h>\n"
+                                               code += "#include <cstdlib>\n"
+                                               code += "#include <algorithm>\n"
                                                code += "#include <stdio.h>\n"
-                                               if( self.useTimings ):
-                                                   code += "#include <omp.h>\n"
+                                               code += "#include \"memoryBroker.h\"\n"
 
                                                code += "#define MR (%d)\n"%mr
                                                code += "#define NR (%d)\n"%nr
@@ -974,7 +1182,7 @@ class Gett:
                                                        macroVariant = token[7:].split("_")
                                                        break
                                                if( macroVariant == "" ):
-                                                   print "[TTC] ERROR: macro variant could not be decoded."
+                                                   print "[TCCG] ERROR: macro variant could not be decoded."
                                                    exit(0)
                                                code += self.getMacroKernel(mc, mc1,
                                                      nc, nc1, macroVariant,
@@ -983,6 +1191,8 @@ class Gett:
                                                      nIndRemainder)
                                                ##############################
 
+                                               code += self.getParallelHelperCode()
+
                                                key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr)
                                                
                                                gettName = self.getName(key)
@@ -990,25 +1200,129 @@ class Gett:
                                                    gettName = "gett"
                                                code += self.getHeader(gettName) + "\n{\n"
                                                
-                                               tmpCode = self.declareVariables()
-                                               code += tmpCode
+                                               code += self.declareVariables()
 
                                                ###############################
                                                # Generate M, N and K Loops as well as packing routines
                                                ###############################
+
+                                               if( variant[0] == 'n' ):
+                                                   code += "%sconst int numTasksOuter = N_/NC;\n"%(self.indent)
+                                                   code += "%sconst int numTasksInner = M_/MC;\n"%(self.indent)
+                                                   code += "%sconst int numTasksMacroOuter = NC/NR;\n"%(self.indent)
+                                                   code += "%sconst int numTasksMacroInner = MC/MR;\n"%(self.indent)
+                                                   code += "%sconstexpr uint64_t paddedSizeOuter = ((NC * KC * sizeof(float) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent)
+                                                   code += "%sconstexpr uint64_t paddedSizeInner = ((MC * KC * sizeof(float) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent)
+                                               else:
+                                                   code += "%sconst int numTasksOuter = M_/MC;\n"%(self.indent)
+                                                   code += "%sconst int numTasksInner = N_/NC;\n"%(self.indent)
+                                                   code += "%sconst int numTasksMacroOuter = MC/MR;\n"%(self.indent)
+                                                   code += "%sconst int numTasksMacroInner = NC/NR;\n"%(self.indent)
+                                                   code += "%sconstexpr uint64_t paddedSizeOuter = ((MC * KC * sizeof(float) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent)
+                                                   code += "%sconstexpr uint64_t paddedSizeInner = ((NC * KC * sizeof(float) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent)
+                                               parallelismStr = self.getParallelismStrategy(mc, nc, kc, mr, nr, variant[0] == 'm')
+                                               code += "%s\n"%(parallelismStr)
+                                               code += "%sauto par5 = std::getenv(\"TCCG_PAR_LOOP5\");\n"%(self.indent)
+                                               code += "%sif( par5 ) numParallel[0] = std::max(1, atoi(par5));\n"%(self.indent)
+                                               code += "%sauto par3 = std::getenv(\"TCCG_PAR_LOOP3\");\n"%(self.indent)
+                                               code += "%sif( par3 ) numParallel[1] = std::max(1, atoi(par3));\n"%(self.indent)
+                                               code += "%sauto par2 = std::getenv(\"TCCG_PAR_LOOP2\");\n"%(self.indent)
+                                               code += "%sif( par2 ) numParallel[2] = std::max(1, atoi(par2));\n"%(self.indent)
+                                               code += "%sauto par1 = std::getenv(\"TCCG_PAR_LOOP1\");\n"%(self.indent)
+                                               code += "%sif( par1 ) numParallel[3] = std::max(1, atoi(par1));\n"%(self.indent)
+                                               code += "%sconst int numThreadsGlobal = numParallel[0] * numParallel[1] * numParallel[2] * numParallel[3];\n"%(self.indent)
+                                               code += "\n"
+                                               code += self.createTransposePlanA(sizeA, permA, lda, ldaOut, 1, variant[0] == 'm')
+                                               code += self.createTransposePlanB(sizeB, permB, ldb, ldbOut, 1, variant[0] == 'n')
+                                               code += "\n"
+                                               code += "%s/*\n"%(self.indent)
+                                               code += "%s * Allocate memory for packing buffers\n"%(self.indent)
+                                               code += "%s */\n"%(self.indent)
+                                               code += "%sconst uint64_t requestedSize = paddedSizeInner * (numParallel[0] * numParallel[1]) +\n"%(self.indent)
+                                               code += "%s                             paddedSizeOuter * (numParallel[0]);\n"%(self.indent)
+                                               code += "%sif( requestedSize > memBroker.size() )\n"%(self.indent)
+                                               code += "%s{\n"%(self.indent)
+                                               code += "%s   if( memBroker.isInit() )\n"%(self.indent)
+                                               code += "%s      memBroker.release();\n"%(self.indent)
+                                               code += "%s   memBroker.alloc( requestedSize );\n"%(self.indent)
+                                               code += "%s}\n"%(self.indent)
+                                               code += "%s\n"%(self.indent)
+                                               code += "%splanOuter->resetThreadIds();\n"%(self.indent)
+                                               code += "%splanInner->resetThreadIds();\n"%(self.indent)
+                                               code += "%shptt::Transpose<float>* plansOuter[numParallel[0]];\n"%(self.indent)
+                                               code += "%shptt::Transpose<float>* plansInner[numParallel[0]][numParallel[1]];\n"%(self.indent)
+                                               code += "%sfloat* packedOuter[numParallel[0]];\n"%(self.indent)
+                                               code += "%sfloat* packedInner[numParallel[0]][numParallel[1]];\n"%(self.indent)
+                                               code += "%sBarrier barrierOuter[numParallel[0]];\n"%(self.indent)
+                                               code += "%sBarrier barrierInner[numParallel[0]][numParallel[1]];\n"%(self.indent)
+                                               code += "%sfor(int j=0; j < numParallel[0]; ++j){\n"%(self.indent)
+                                               code += "%s   plansOuter[j] = new hptt::Transpose<float>(*planOuter);\n"%(self.indent)
+                                               code += "%s   barrierOuter[j].init(numParallel[1] * numParallel[3] * numParallel[2]);\n"%(self.indent)
+                                               code += "%s   packedOuter[j] = (float*) memBroker.requestMemory(paddedSizeOuter);\n"%(self.indent)
+                                               code += "%s   for(int i=0; i < numParallel[1]; ++i)\n"%(self.indent)
+                                               code += "%s   {\n"%(self.indent)
+                                               code += "%s      plansInner[j][i] = new hptt::Transpose<float>(*planInner);\n"%(self.indent)
+                                               code += "%s      barrierInner[j][i].init(numParallel[3] * numParallel[2] );\n"%(self.indent)
+                                               code += "%s      packedInner[j][i] = (float*) memBroker.requestMemory(paddedSizeInner);\n"%(self.indent)
+                                               code += "%s   }\n"%(self.indent)
+                                               code += "%s}\n"%(self.indent)
+                                               code += "    auto maxThreads = std::min(omp_get_max_threads(), numThreadsGlobal);\n"
+                                               code += "#pragma omp parallel for num_threads(maxThreads) schedule(static,1)\n"
+                                               code += "   for(int taskId=0; taskId < numThreadsGlobal; ++taskId)\n"
+                                               code += "{\n"
+                                               code += "   int numThreadsRemaining = numThreadsGlobal;\n"
+                                               code += "\n"
+                                               code += "   int myStart[4]; int myEnd[4];\n"
+                                               code += "   int threadId[4] = { taskId, 0,0,0 };\n"
+                                               code += "\n"
+                                               code += "   //------------------------------\n"
+                                               code += "   int level = 0;\n"
+                                               code += "   numThreadsRemaining /= numParallel[level];\n"
+                                               code += "   int threadIdCommOuter;\n"
+                                               code += "   getStartEnd( numTasksOuter, numParallel[level], threadId[level], numThreadsRemaining, threadIdCommOuter, threadId[level+1], myStart[level], myEnd[level]);\n"
+                                               code += "   float* myPackedOuter = packedOuter[threadIdCommOuter];\n"
+                                               code += "   //------------------------------\n"
+                                               code += "   level++;\n"
+                                               code += "   numThreadsRemaining /= numParallel[level];\n"
+                                               code += "   int threadIdCommInner;\n"
+                                               code += "   getStartEnd( numTasksInner, numParallel[level], threadId[level], numThreadsRemaining, threadIdCommInner, threadId[level+1], myStart[level], myEnd[level]);\n"
+                                               code += "   float* myPackedInner = packedInner[threadIdCommOuter][threadIdCommInner];\n"
+                                               code += "   //------------------------------\n"
+                                               code += "   level++;\n"
+                                               code += "   numThreadsRemaining /= numParallel[level];\n"
+                                               code += "   int dummy, dummy2;\n"
+                                               code += "   getStartEnd( numTasksMacroOuter, numParallel[level], threadId[level], numThreadsRemaining, dummy, threadId[level+1], myStart[level], myEnd[level]);\n"
+                                               code += "   //------------------------------\n"
+                                               code += "   level++;\n"
+                                               code += "   numThreadsRemaining = 1;\n"
+                                               code += "   getStartEnd( numTasksMacroInner, numParallel[level], threadId[level], numThreadsRemaining, dummy, dummy2, myStart[level], myEnd[level]);\n"
+                                               code += "\n"
+                                               code += "   //------------------------------\n"
+                                               code += "   auto myPlanOuter = plansOuter[threadIdCommOuter];\n"
+                                               code += "   auto myPlanInner = plansInner[threadIdCommOuter][threadIdCommInner];\n"
+                                               code += "   auto *myBarrierOuter = &(barrierOuter[threadIdCommOuter]);\n"
+                                               code += "   auto *myBarrierInner = &(barrierInner[threadIdCommOuter][threadIdCommInner]);\n"
+                                               code += "   myPlanOuter->setOutputPtr(myPackedOuter); \n"
+                                               code += "   myPlanInner->setOutputPtr(myPackedInner);\n"
+                                               code += "   int myThreadId = omp_get_thread_num();\n"
+                                               code += "   myPlanOuter->addThreadId(myThreadId);\n"
+                                               code += "   myPlanInner->addThreadId(myThreadId);\n"
+                                               code += "\n"
                                                code += "   //%s <- %s %s\n"%(tensorC4, tensorA3, tensorB3)
-                                               tmpCode = self.decodeVariant(variant,
+
+                                               code += self.decodeVariant(variant,
                                                      mInd0, mInd1, mIndRemainder,
                                                      nInd0, nInd1, nIndRemainder,
                                                      kInd0, kInd1,
-                                                     transposeNameA,
-                                                     transposeNameB,
                                                      tensorA3, tensorB3,
                                                      tensorC4, kc, 
-                                                     sizeA, lda, ldaOut, 
-                                                     sizeB, ldb, ldbOut, 
+                                                     sizeA, permA, lda, ldaOut, 
+                                                     sizeB, permB, ldb, ldbOut, 
                                                      Ahat, Bhat, Chat)
-                                               code += tmpCode
+
+                                               code += "} //parallel\n"
+                                               code += "   memBroker.reset();\n"
+                                               code += "} //gett\n"
 
                                                ####################################
                                                # print to file
