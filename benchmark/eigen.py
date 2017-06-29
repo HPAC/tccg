@@ -1,4 +1,4 @@
-def genEigen(size, astr,bstr, cstr, dataType):
+def genEigen(size, astr,bstr, cstr, dataType, numThreads):
    asize = ""
    ld = 1
    asizeTotal = 1
@@ -48,17 +48,22 @@ def genEigen(size, astr,bstr, cstr, dataType):
    for c in size:
       flops *= size[c]
 
-   code = "#include <unsupported/Eigen/CXX11/Tensor>\n"
+   code = "#define EIGEN_USE_THREADS\n"
+   code += "#include <unsupported/Eigen/CXX11/Tensor>\n"
+   code += "#include <unsupported/Eigen/CXX11/ThreadPool>\n"
    code += "#include <stdio.h>\n"
    code += "#include <stdlib.h>\n"
    code += "#include <omp.h>\n"
    code += "\n"
    code += "void trashCache(float* trash1, float* trash2, int nTotal){\n"
+   code += "   #pragma omp parallel for\n"
    code += "   for(int i = 0; i < nTotal; i ++) \n"
    code += "      trash1[i] += 0.99 * trash2[i];\n"
    code += "}\n"
    code += "void example(int argc, char** argv)\n{\n"
 
+   code += "  Eigen::ThreadPool pool(%d);\n"%numThreads
+   code += "  Eigen::ThreadPoolDevice my_device(&pool, %d);\n"%numThreads
    floatType = "float"
    if( dataType == 'd' ):
        floatType = "double"
@@ -84,7 +89,8 @@ def genEigen(size, astr,bstr, cstr, dataType):
    code += "     trashCache(trash1, trash2, nTotal);\n"
    code += "     double t = omp_get_wtime();\n"
    #code += "     c%s = a.contract(b, product_dims);\n"%permC
-   code += "     c = a.contract(b, product_dims)%s;\n"%permC
+   #code += "     c = a.contract(b, product_dims)%s;\n"%permC
+   code += "     c.device(my_device) = a.contract(b, product_dims)%s;\n"%permC
    code += "     t = omp_get_wtime() - t;\n"
    code += "     minTime = (minTime < t) ? minTime : t;\n"
    code += "  }\n"

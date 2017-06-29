@@ -7,7 +7,8 @@ import tblis
 import eigen 
 import argparse
 
-_tensorToolboxRoot = "PATH_TO/tensor_toolbox" #set this if tensor_toolbox is available
+#_tensorToolboxRoot = "PATH_TO/tensor_toolbox" #set this if tensor_toolbox is available
+_tensorToolboxRoot = "/home/ps072922/projects/gett_paper/benchmark/tensorToolbox/tensor_toolbox" #set this if tensor_toolbox is available
 _CTFRoot = "${CTF_ROOT}"
 _TBLISRoot = "${TBLIS_ROOT}"
 _EigenRoot = "${EIGEN_ROOT}"
@@ -264,7 +265,9 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
     benchmarkFileEigen.write("rm -f eigen_tmp.dat\n") #remove old dat files
     ctf_sh.write("rm -f ctf_tmp.dat\n") #remove old dat files
     tblis_sh.write("rm -f tblis_tmp.dat\n") #remove old dat files
-    eigen_sh.write("rm -f eigen_tmp.dat\n") #remove old dat files
+    eigen_sh.write("for i in `seq 1 2`;\n")
+    eigen_sh.write("do\n") #remove old dat files
+    eigen_sh.write("   rm -f eigen_tmp2.dat eigen_tmp.dat\n") #remove old dat files
 
     counter = 0
     for test in testcases:
@@ -339,7 +342,7 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        print_ctf(libtensor.gen(sizesTmp, tensors[1], tensors[2], tensors[0], floatType, numThreads), libtensorFilename)
        print_ctf(ctf.genCTF(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), ctfFilename)
        print_ctf(tblis.genTBLIS(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), tblisFilename)
-       print_ctf(eigen.genEigen(sizesTmp, tensors[1], tensors[2], tensors[0], floatType), eigenFilename)
+       print_ctf(eigen.genEigen(sizesTmp, tensors[1], tensors[2], tensors[0], floatType, numThreads), eigenFilename)
        ctf_sh.write("icpc %s -O0 -I${MPI_INCLUDE} -I${CTF_ROOT}/include ${CTF_ROOT}/lib/libctf.a -qopenmp -std=c++0x -L${MPI_LIBDIR} -mkl -lmpi -xHost\n"%(ctfFilename)) #O0 is used to avoid that the compiler removes trashCache()
        ctf_sh.write("echo \""+test+"\" | tee >> ctf_tmp.dat\n")
        #ctf_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d  ./a.out | grep GF >> ctf_tmp.dat\n"%numThreads)
@@ -347,9 +350,9 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
        tblis_sh.write("icc -O0  %s -I%s/include %s/lib/libtblis.a -L%s/lib -ltci -lhwloc -std=c99 -qopenmp -xHost\n"%(tblisFilename,_TBLISRoot,_TBLISRoot,_TBLISRoot)) #O0 is used to avoid that the compiler removes trashCache()
        tblis_sh.write("echo \""+test+"\" | tee >> tblis_tmp.dat\n")
        tblis_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d ./a.out | grep GF >> tblis_tmp.dat\n"%numThreads)
-       eigen_sh.write("icpc -O3 -I%s -std=c++14 -qopenmp -xHost %s\n"%(_EigenRoot,eigenFilename)) #O0 is used to avoid that the compiler removes trashCache()
-       eigen_sh.write("echo \""+test+"\" | tee >> eigen_tmp.dat\n")
-       eigen_sh.write("KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d ./a.out | grep GF >> eigen_tmp.dat\n"%numThreads)
+       eigen_sh.write("   icpc -O3 -I%s -std=c++14 -qopenmp -xHost %s\n"%(_EigenRoot,eigenFilename)) #O0 is used to avoid that the compiler removes trashCache()
+       eigen_sh.write("   echo \""+test+"\" | tee >> eigen_tmp.dat\n")
+       eigen_sh.write("   KMP_AFFINITY=compact,1 OMP_NUM_THREADS=%d numactl --interleave=all ./a.out | grep GF >> eigen_tmp.dat\n"%numThreads)
        counter += 1
 
     benchmarkFile.write("cat gett_tmp.dat | sed '$!N;s/\\n/ /' > tccg_"+benchmarkName+".dat\n") #
@@ -357,7 +360,9 @@ def generate(testcases,benchmarkName,arch,numThreads,maxImplementations,floatTyp
     tblis_sh.write("cat tblis_tmp.dat | sed '$!N;s/\\n/ /' > tblis_"+benchmarkName+"2.dat\n") #
     tblis_sh.write("python maxFromFiles.py tblis_"+benchmarkName+"2.dat tblis_"+benchmarkName+".dat\n") #
     tblis_sh.write("rm -f tblis_"+benchmarkName+"2.dat\n") #
-    eigen_sh.write("cat eigen_tmp.dat | sed '$!N;s/\\n/ /' > eigen_"+benchmarkName+".dat\n") #
+    eigen_sh.write("   cat eigen_tmp.dat | sed '$!N;s/\\n/ /' > eigen_tmp2.dat\n") #
+    eigen_sh.write("   python maxFromFiles.py eigen_tmp2.dat eigen_"+benchmarkName+".dat 4\n") #
+    eigen_sh.write("done\n") #remove old dat files
     benchmarkFileTBLIS.write("./tblis_"+benchmarkName+".sh\n")
     benchmarkFileEigen.write("./eigen_"+benchmarkName+".sh\n")
 
@@ -381,7 +386,7 @@ def main():
    if( args.arch ):
        arch = args.arch
    if( args.numThreads ):
-       numThreads = args.numThreads
+       numThreads = int(args.numThreads)
    if( args.maxImplementations != None):
        maxImplementations = args.maxImplementations
    if( args.floatType != None):
@@ -389,7 +394,7 @@ def main():
 
    matlabfile = open("tensorToolbox.m","w")
    #init tensor toolbox
-   matlabfile.write("maxNumCompThreads(1);\n")
+   matlabfile.write("maxNumCompThreads(%d);\n"%numThreads)
    matlabfile.write("cd %s\n"%_tensorToolboxRoot )
    matlabfile.write("addpath(pwd)\n")
    matlabfile.write("cd met\n")
@@ -399,6 +404,7 @@ def main():
    benchmarkFile = open("tccg_benchmark.sh","w")
    benchmarkFileTBLIS = open("tblis_benchmark.sh","w")
    benchmarkFileEigen = open("eigen_benchmark.sh","w")
+   benchmarkFileEigen.write("rm -f eigen*.dat\n")
    stdout = []
    sizes = {}
    sizes["j"] = 24

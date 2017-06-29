@@ -54,18 +54,20 @@ def genTBLIS(size, astr,bstr, cstr, dataType):
    code += "  tblis_tensor A;\n"
    if( dataType == 'd' ):
        code += "  A.type = TYPE_DOUBLE;\n"
-       code += "  *(double*)A.scalar = 1.0;\n"
+       #code += "  A.scalar.data.%s = 1.0;\n"%dataType
+       code += "  *(double*)A.scalar = 1.0;\n"  # WORKING with commit 9bf5871a28e66e
        code += "  posix_memalign((void**) &A.data, 64, sizeof(double) * %d);\n"%asizeTotal
        code += "  double* Adata = A.data;\n"
    else:
        code += "  A.type = TYPE_FLOAT;\n"
-       code += "  *(float*)A.scalar = 1.0;\n"
+       #code += "  A.scalar.data.%s = 1.0;\n"%dataType
+       code += "  *(double*)A.scalar = 1.0;\n"
        code += "  posix_memalign((void**) &A.data, 64, sizeof(float) * %d);\n"%asizeTotal
        code += "  float* Adata = A.data;\n"
    code += "  A.ndim = %d;\n"%len(astr)
    code += "  A.len = sizeA;\n"
    code += "  A.stride = stride_A;\n"
-   code += "  //#pragma omp parallel for\n"
+   code += "  #pragma omp parallel for\n"
    code += "  for(len_type i = 0; i < %d; i++)\n"%asizeTotal
    code += "     Adata[i] = (((i+1)*3)%909) / 908.;\n"
    # -------- B --------
@@ -74,18 +76,20 @@ def genTBLIS(size, astr,bstr, cstr, dataType):
    code += "  tblis_tensor B;\n"
    if( dataType == 'd' ):
        code += "  B.type = TYPE_DOUBLE;\n"
+       #code += "  B.scalar.data.%s = 1.0;\n"%dataType
        code += "  *(double*)B.scalar = 1.0;\n"
        code += "  posix_memalign((void**) &B.data, 64, sizeof(double) * %d);\n"%bsizeTotal
        code += "  double* Bdata = B.data;\n"
    else:
        code += "  B.type = TYPE_FLOAT;\n"
-       code += "  *(float*)B.scalar = 1.0;\n"
+       code += "  *(double*)B.scalar = 1.0;\n"
+       #code += "  B.scalar.data.%s = 1.0;\n"%dataType
        code += "  posix_memalign((void**) &B.data, 64, sizeof(float) * %d);\n"%bsizeTotal
        code += "  float* Bdata = B.data;\n"
    code += "  B.ndim = %d;\n"%len(bstr)
    code += "  B.len = sizeB;\n"
    code += "  B.stride = stride_B;\n"
-   code += "  //#pragma omp parallel for\n"
+   code += "  #pragma omp parallel for\n"
    code += "  for(len_type i = 0; i < %d; i++)\n"%bsizeTotal
    code += "     Bdata[i] = (((i+1)*7)%909) / 908.0;\n"
    # -------- C --------
@@ -95,17 +99,19 @@ def genTBLIS(size, astr,bstr, cstr, dataType):
    if( dataType == 'd' ):
        code += "  C.type = TYPE_DOUBLE;\n"
        code += "  *(double*)C.scalar = 0.0;\n"
+       #code += "  C.scalar.data.%s = 0.0;\n"%dataType
        code += "  posix_memalign((void**) &C.data, 64, sizeof(double) * %d);\n"%csizeTotal
        code += "  double* Cdata = C.data;\n"
    else:
        code += "  C.type = TYPE_FLOAT;\n"
-       code += "  *(float*)C.scalar = 0.0;\n"
+       code += "  *(double*)C.scalar = 0.0;\n" 
+       #code += "  C.scalar.data.%s = 0.0;\n"%dataType
        code += "  posix_memalign((void**) &C.data, 64, sizeof(float) * %d);\n"%csizeTotal
        code += "  float* Cdata = C.data;\n"
    code += "  C.ndim = %d;\n"%len(cstr)
    code += "  C.len = sizeC;\n"
    code += "  C.stride = stride_C;\n"
-   code += "  //#pragma omp parallel for\n"
+   code += "  #pragma omp parallel for\n"
    code += "  for(len_type i = 0; i < %d; i++)\n"%csizeTotal
    code += "     Cdata[i] = (((i+1)*11)%909) / 908.;\n"
 

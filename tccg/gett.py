@@ -646,7 +646,7 @@ class Gett:
                 packingTime += 2 * packingTimeTensor 
 
         ##################################
-        # decrease GEMM perf if we exceed the cache size
+        # decrease GEMM perf if it exceeds the cache size
         ##################################
         gemmEfficiency = 0.95 # we assume that we can reach xx% of peak (once everything is packed)
         ###### L2 ######
@@ -868,11 +868,14 @@ class Gett:
             l3size -= parallelismStrategy[0] * parallelismStrategy[1] * paddedSizeInner # the parallelismStrategy[0] factor could be avoided, but this puts more stress on the coherency protocol
 
         if( parallelismStrategy[0] * paddedSizeOuter > 0.8 * l3size ): #make sure that every thing fits into cache
-            cost *= max(4.0, parallelismStrategy[0] * paddedSizeOuter / 0.8 / l3size)
+            if( l3size <= 0 ):
+                cost *= 4.0
+            else:
+                cost *= min(4.0, parallelismStrategy[0] * paddedSizeOuter / 0.8 / l3size)
         
         cost *= self.getLoadBalance(availParallelism, parallelismStrategy)
 
-        cost *= 1.065**(parallelismStrategy[-1]-1) # penalize parallelization of innermost loop around the micro-kernel. Rationale: load of sliver from L3 will be loaded redundantely by all threads
+        cost *= 1.065**(parallelismStrategy[-1]-1) # penalize parallelization of innermost loop around the micro-kernel. Rationale: load of sliver from L3 will be loaded redundantly by all threads
         return cost
 
 

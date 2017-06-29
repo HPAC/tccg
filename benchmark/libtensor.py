@@ -91,15 +91,16 @@ def gen(size, astr,bstr, cstr, dataType, numThreads):
     bispaceC = ""
     for c in cstr: 
         bispaceC += "s%s|"%c
-    floatType = ""
+    floatType = "double"
     if( dataType == 's' ):
-        floatType = ", float"
+        print "WARNING: LIBTENSOR DOES NOT WORK FOR SIGNLE PRECISION"
+        code +=  "WARNING: LIBTENSOR DOES NOT WORK FOR SIGNLE PRECISION\n"
     code += "    bispace<%d> sA(%s);\n"%(len(astr), bispaceA[:-1])
-    code += "    dense_tensor<%d%s,double,allocator<double> > A(sA.get_bis().get_dims());\n"%(len(astr), floatType)
+    code += "    dense_tensor<%d,%s,allocator<%s> > A(sA.get_bis().get_dims());\n"%(len(astr), floatType, floatType)
     code += "    bispace<%d> sB(%s);\n"%(len(bstr), bispaceB[:-1])
-    code += "    dense_tensor<%d%s,double,allocator<double> > B(sB.get_bis().get_dims());\n"%(len(bstr), floatType)
+    code += "    dense_tensor<%d,%s,allocator<%s> > B(sB.get_bis().get_dims());\n"%(len(bstr), floatType, floatType)
     code += "    bispace<%d> sC(%s);\n"%(len(cstr), bispaceC[:-1])
-    code += "    dense_tensor<%d%s,double,allocator<double> > C(sC.get_bis().get_dims());\n"%(len(cstr), floatType)
+    code += "    dense_tensor<%d,%s,allocator<%s> > C(sC.get_bis().get_dims());\n"%(len(cstr), floatType, floatType)
     code += "    tod_set<%d>(0.55).perform(true, A);\n"%len(astr)
     code += "    tod_set<%d>(2.0).perform(true, B);\n"%len(bstr)
     code += "\n"
