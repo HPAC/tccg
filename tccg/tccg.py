@@ -568,7 +568,7 @@ class Tccg:
             content = l.split("#")[0] #remove comments
             content = content.replace(" ","") #remove whitespaces
             if(len(content) > 0 ):
-                ttensors = re.findall("[A-Z][0-9]*\[[a-z][a-z,0-9]*[,[a-z][a-z,0-9]*]*\]", content)
+                ttensors = re.findall("[A-C]\[[a-z][a-z,0-9]*[,[a-z][a-z,0-9]*]*\]", content)
                 if( len(ttensors) == 3 or len(ttensors) == 4):
                     if( content.find("+=") != -1 or content.find("-=") != -1):
                         print FAIL + "Syntax error: += or -= is not allowed." + ENDC
@@ -652,9 +652,20 @@ class Tccg:
             exit(-1)
 
         retTensors = []
+        print map(str,tensors)
         # create Tensor objects from strings
-        for t in tensors:
-            label = re.findall("[A-Z][0-9]*",t)[0]
+        for i in range(len(tensors)):
+            t = tensors[i]
+            label = re.findall("[A-C]",t)[0]
+            if( i == 0 and label != "C" ):
+                print WARNING + "WARNING: first Tensor use the label '%s' => renamed to C."%(label) + ENDC
+                label = "C"
+            if( i == 1 and label != "A" ):
+                print WARNING + "WARNING: second Tensor use the label '%s' => renamed to A."%(label) + ENDC
+                label = "A"
+            if( i == 2 and label != "B" ):
+                print WARNING + "WARNING: third Tensor use the label '%s' => renamed to B."%(label) + ENDC
+                label = "B"
             tmp = re.findall("\[[a-z][a-z,0-9]*[,[a-z][a-z,0-9]*]*\]",t)
             tmp = tmp[0][1:-1] #delte '[' and ']'
             indices = tmp.split(',')

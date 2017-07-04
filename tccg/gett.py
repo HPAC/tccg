@@ -905,7 +905,6 @@ class Gett:
         # we prefer to parallelize the third loop around the micro kernel (private copies in L2)
         ret = "%sint parallelStrategyId = 0;\n"%(self.indent)
         ret += "%sint numParallelStrategies[%d][4] = {\n"%(self.indent,min(8,parallelismStragegies))
-        print "num strategies: ", len(parallelismStragegies)
         for i in range(min(8,len(parallelismStragegies))):
             tmp = ""
             for a in parallelismStragegies[i]:
