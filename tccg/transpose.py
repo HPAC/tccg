@@ -113,13 +113,16 @@ class Transpose:
         code = "   { // %s = TRANSPOSE(%s)\n"%(str(self.OUT), str(self.IN))
         indentLevel += 1
 
-        (transposeName, bandwidth, perm, size, lda, ldb) = generateTranspose(self.IN, self.OUT, self.floatType, self.alpha,
-                self.beta, self.numThreads,0,0,0,self.arch.architectureName,
-                self.generateOnly, self.streamingStores  )
+        (perm, size, lda, ldb) = generateTransposeHPTT(self.IN, self.OUT)
         size_str = ""
+        code += "%sint perm[] = {"%(indent * indentLevel)
+        for s in perm:
+            code += "%d,"%s
+        code = code[:-1] + "};\n"
+        code += "%sint size[] = {"%(indent * indentLevel)
         for s in size:
-            size_str += "%d, "%s
-        size_str = size_str[:-2]
+            code += "%d,"%s
+        code = code[:-1] + "};\n"
         code += "%sint lda[] = {"%(indent * indentLevel)
         for s in lda:
             code += "%s,"%s
@@ -130,26 +133,15 @@ class Transpose:
         code = code[:-1] + "};\n"
         code += "%s%s alpha_ = %f;\n"%(indent * indentLevel, self.floatType, self.alpha)
         if( self.beta != 0 ):
-
-            if( self.useGenericBeta ):
-                code += "%s%s beta_ = beta;\n"%(indent * indentLevel, self.floatType)
-            else:
-                code += "%s%s beta_ = %f;\n"%(indent * indentLevel, self.floatType, self.beta)
-            if( self.arch.architectureName == "cuda" ):
-                code += "%sint size[] = { %s };\n"%(indent * indentLevel, size_str)
-                code += "%s%s(%s, %s, alpha_, beta_, size, lda, ldb);\n"%(indentLevel*indent,transposeName, self.IN.label, self.OUT.label)
-            else:
-                code += "%s%s<%s>(%s, %s, alpha_, beta_, lda, ldb);\n"%(indentLevel*indent,transposeName, size_str, self.IN.label, self.OUT.label)
+            code += "%s%s beta_ = beta;\n"%(indent * indentLevel, self.floatType)
         else:
-            if( self.arch.architectureName == "cuda" ):
-                code += "%sint size[] = { %s };\n"%(indent * indentLevel, size_str)
-                code += "%s%s(%s, %s, alpha_, size, lda, ldb);\n"%(indentLevel*indent,transposeName, self.IN.label, self.OUT.label)
-            else:
-                code += "%s%s<%s>(%s, %s, alpha_, lda, ldb);\n"%(indentLevel*indent,transposeName, size_str, self.IN.label, self.OUT.label)
+            code += "%s%s beta_ = 0.0;\n"%(indent * indentLevel, self.floatType)
+
+        code += "%sauto plan = hptt::create_plan( perm, %d, alpha_, %s, size, lda, 0, %s, ldb, hptt::ESTIMATE, %d);\n"%(indentLevel*indent, len(size), self.IN.label, self.OUT.label, self.numThreads)
+        code += "%splan->execute();\n"%(indent * indentLevel)
 
         code += "   }\n"
-        include = "#include \"ttc_transpositions/%s.h\"\n"%transposeName 
-        return (include ,code)
+        return ("",code)
 
 
 

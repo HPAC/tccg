@@ -139,6 +139,7 @@ class TTGEMMT:
         else:
             code = "#include \"gemm.hpp\"\n"
         code += "#include <stdlib.h>\n"
+        code += "#include <hptt.h>\n"
         codeHpp = ""
         if( self.arch.architectureName  == "cuda" ):
             code += "#include <cublas_v2.h>\n"

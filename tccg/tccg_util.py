@@ -3,7 +3,6 @@ from Index import *
 import itertools
 import sys
 import traceback
-import ttc
 import copy
 import subprocess
 
@@ -202,74 +201,6 @@ def generateTransposeHPTT(IN, OUT):
    outerSizeB = copy.deepcopy(convertTTCldaToTCClda(OUT.ld, OUT.indices[-1].size))
 
    return (perm, size, outerSizeA, outerSizeB)
-
-
-def generateTranspose(IN, OUT, floatType, alpha, beta, numThreads,
-        hotIN, hotOUT, nameOnly, arch, generateOnly, streamingStores):
-   perm = getPerm(IN, OUT)
-
-   size = []
-   for idx in IN.indices:
-      size.append(idx.size)
-
-   lda = copy.deepcopy(convertTTCldaToTCClda(IN.ld, IN.indices[-1].size))
-   ldb = copy.deepcopy(convertTTCldaToTCClda(OUT.ld, OUT.indices[-1].size))
-
-#   print perm, size, lda, ldb
-
-   try:
-       ttcVersion = ttc.ttc_util.getVersion()
-       if( ttcVersion[0] < 0 or ttcVersion[1] < 1 or ttcVersion[2] < 2 ):
-           print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.2"
-           exit(-1)
-   except:
-       print "ERROR: your TTC version is not up to date. Please update TTC to version v0.1.2"
-       exit(-1)
-   ttc_args = ttc.ttc_util.TTCargs(perm, size)
-   ttc_args.alpha = alpha
-   ttc_args.beta = beta
-   ttc_args.affinity = "compact,1"
-   ttc_args.numThreads = numThreads
-   ttc_args.floatTypeA = floatType
-   ttc_args.floatTypeB = floatType
-   ttc_args.streamingStores = streamingStores
-   ttc_args.maxNumImplementations = 10
-   if( generateOnly ):
-      ttc_args.maxNumImplementations = 1
-   ttc_args.ignoreDatabase = 0
-   ttc_args.lda = lda
-   ttc_args.ldb = ldb
-   ttc_args.debug = 0
-   if( arch == "avx" or arch == "avx2" ):
-       ttc_args.architecture = "avx"
-   else:
-       ttc_args.architecture = arch
-   ttc_args.align = 1
-   ttc_args.blockings = []
-   ttc_args.loopPermutations = []
-   ttc_args.prefetchDistances  = []
-   ttc_args.scalar = 0
-   ttc_args.silent = 1
-   ttc_args.hotA = hotIN
-   ttc_args.hotB = hotOUT
-
-   try:
-      if( nameOnly ):
-          transposeName = ttc.ttc.getTransposeName(ttc_args)
-          bandwidth = -1
-      else:
-          (transposeName, bandwidth) = ttc.ttc.generateTransposition( ttc_args )
-          #print "TTC attains ",bandwidth, "GiB/s for permutation: ", perm
-   except:
-      print "TTC exited with an error for the given permutation:"
-      print OUT, "<-", IN 
-      print traceback.print_exc(file=sys.stdout)
-      print ttc_args.getCommandLineString()
-      raise
-
-   #if( generateOnly ):
-       #print ttc_args.getCommandLineString()
-   return (transposeName, bandwidth, ttc_args.getPerm(), ttc_args.getSize(), ttc_args.lda, ttc_args.ldb)
 
 def splitIndices(indices, pos, size):
     newIdx = index(indices[pos].label + "_1", indices[pos].size/size)

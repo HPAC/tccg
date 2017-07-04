@@ -158,8 +158,6 @@ class Tccg:
     def emitFinalCode(self, maxGettFlops, maxLoGFlops, maxTTGTFlops, key = ()):
 
        directory = self.args.workingDir+"/tccg_implementations"
-       if( os.path.exists(directory+"/ttc_transpositions") ):
-           shutil.rmtree(directory+"/ttc_transpositions")
        if( not os.path.exists(directory) ):
             os.makedirs(directory)
        filename = ""
@@ -170,8 +168,6 @@ class Tccg:
            #filename = self.gett.getName(key)+".cpp"
            filename = "gett.cpp"
            shutil.copyfile("./gett0.cpp",directory+"/"+filename)
-           if( os.path.exists("./ttc_transpositions") ):
-               shutil.copytree("./ttc_transpositions",directory+"/ttc_transpositions")
        elif( maxLoGFlops >= maxTTGTFlops ):
            # generate LoG
            self.gemmLoop.genCode()
@@ -186,8 +182,6 @@ class Tccg:
            shutil.copyfile("./ttgemmt.hpp",directory+"/"+filename)
            filename = "ttgemmt.cpp"
            shutil.copyfile("./ttgemmt.cpp",directory+"/"+filename)
-           if( os.path.exists("./ttc_transpositions") ):
-               shutil.copytree("./ttc_transpositions",directory+"/ttc_transpositions")
 
        print "The generated code is available at:",directory+"/"+filename
 
