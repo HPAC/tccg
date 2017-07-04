@@ -905,17 +905,18 @@ class Gett:
         # we prefer to parallelize the third loop around the micro kernel (private copies in L2)
         ret = "%sint parallelStrategyId = 0;\n"%(self.indent)
         ret += "%sint numParallelStrategies[%d][4] = {\n"%(self.indent,min(8,parallelismStragegies))
-        for i in range(min(8,parallelismStragegies)):
+        print "num strategies: ", len(parallelismStragegies)
+        for i in range(min(8,len(parallelismStragegies))):
             tmp = ""
             for a in parallelismStragegies[i]:
                 tmp += str(a) + ","
-            if i == min(8,parallelismStragegies) - 1:
+            if i == min(8,len(parallelismStragegies)) - 1:
                 ret += "%s   { %s } // cost = %f\n"%(self.indent, tmp[:-1], self.getParallelismStrategyCost(mc, nc, kc, mr, nr, AisOuter, availParallelism, parallelismStragegies[i]))
                 ret += "%s};\n"%self.indent
             else:
                 ret += "%s   { %s }, // cost = %f\n"%(self.indent, tmp[:-1], self.getParallelismStrategyCost(mc, nc, kc, mr, nr, AisOuter, availParallelism, parallelismStragegies[i]))
         ret += "%sauto parId = std::getenv(\"TCCG_STRATEGY\");\n"%(self.indent)
-        ret += "%sif( parId ) parallelStrategyId = std::min(std::max(0, atoi(parId)), %d);\n"%(self.indent, min(8,parallelismStragegies)-1)
+        ret += "%sif( parId ) parallelStrategyId = std::min(std::max(0, atoi(parId)), %d);\n"%(self.indent, min(8,len(parallelismStragegies))-1)
         ret += "%sint* numParallel = numParallelStrategies[parallelStrategyId];\n"%(self.indent)
 
         return ret
