@@ -288,6 +288,7 @@ class Gett:
 
        code += "%s// blocking for registers\n"%(level*indent)
        code += "%smicroKernel<update, kc>( &A[%s], &B[%s], &C[%s], beta);\n"%(level*indent,offsetA, offsetB, offsetC) #TODO merge transposeC into micro-kernel
+       #code += "%sbarrier->synchronize();\n"%(level*indent)
        level -= 1
        code += "%s}\n"%(level*indent)
 
@@ -473,16 +474,16 @@ class Gett:
       endIdx = 0
       if( mnk == 'm'):
          if( not AisOuter ):
-             startIdx = 1
-             endIdx = 1
+             startIdx = 2
+             endIdx = 2
          code = "%sfor( int im_ = myStart[%d]; im_ < myEnd[%d]; ++im_ )\n%s{\n"%(level*indent,startIdx, endIdx, level*indent)
       elif( mnk == 'n'):
          if( AisOuter ):
-             startIdx = 1
-             endIdx = 1
+             startIdx = 2
+             endIdx = 2
          code = "%sfor( int in_ = myStart[%d]; in_ < myEnd[%d]; ++in_ )\n%s{\n"%(level*indent,startIdx, endIdx, level*indent)
       elif( mnk == 'k'):
-         code = "%sfor( int ik_ = 0; ik_ < (K_ / KC); ++ik_ )\n%s{\n"%(level*indent,level*indent)
+         code = "%sfor( int ik_ = myStart[1]; ik_ < myEnd[1]; ++ik_ )\n%s{\n"%(level*indent,level*indent)
       else:
          print FAIL + "ERROR: loop cannot be decoded." +ENDC
          exit(-1)
@@ -512,16 +513,16 @@ class Gett:
                 posC = variant.index("C")
                 offsetC = tensorC.getOffset(mInd1 + nInd1) # extract subtensor, this select the portion of C which corresponds to the macro-tile of C
                 code += "%s//%s <- %s %s\n"%(level*indent,Chat, Ahat, Bhat)
-                code += "%sif( ik_ == 0 )\n"%(level*indent)
+                code += "%sif( ik_ == 0 && numParallel[1] == 1 )\n"%(level*indent)
                 code += "%sif( beta == 0 )\n"%((level+1)*indent)
                 packedStr = "myPackedInner, myPackedOuter"
                 if( variant[0] == 'm' ):
                     packedStr = "myPackedOuter, myPackedInner"
-                code += "%smacroKernel<0, %d>(%s, &C[%s], beta, myStart[2], myEnd[2], myStart[3], myEnd[3]);\n"%((level+2)*indent, kc, packedStr,offsetC)
+                code += "%smacroKernel<0, %d>(%s, &myPackedC[%s], beta, myStart[3], myEnd[3], myStart[4], myEnd[4]);\n"%((level+2)*indent, kc, packedStr,offsetC)
                 code += "%selse\n"%((level+1)*indent)
-                code += "%smacroKernel<1, %d>(%s, &C[%s], beta, myStart[2], myEnd[2], myStart[3], myEnd[3]);\n"%((level+2)*indent, kc, packedStr,offsetC)
+                code += "%smacroKernel<1, %d>(%s, &myPackedC[%s], beta, myStart[3], myEnd[3], myStart[4], myEnd[4]);\n"%((level+2)*indent, kc, packedStr,offsetC)
                 code += "%selse\n"%(level*indent)
-                code += "%s   macroKernel<1, %d>(%s, &C[%s], 1.0, myStart[2], myEnd[2], myStart[3], myEnd[3]);\n"%(level*indent, kc, packedStr,offsetC)
+                code += "%s   macroKernel<1, %d>(%s, &myPackedC[%s], 1.0, myStart[3], myEnd[3], myStart[4], myEnd[4]);\n"%(level*indent, kc, packedStr,offsetC)
 
             elif ( token[0] == "}" and len(token) == 2 ): #closing braces
                 if( self.fastMeasurements and i == len(variant)-1 ):
@@ -716,10 +717,10 @@ class Gett:
        code = code[:-1] + "};\n"
 
        if( scale ):
-           code += "%sint numThreadsOuter = numParallel[1] * numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sconst int numThreadsOuter = numParallel[2] * numParallel[3] * numParallel[4];\n"%(indent * level)
            code += "%sauto planOuter = hptt::create_plan( permA, %d, alpha, A, sizeA, ldaA, 0, NULL, ldbA, hptt::ESTIMATE, numThreadsOuter);\n"%(level*indent, len(size))
        else:
-           code += "%sint numThreadsInner = numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sconst int numThreadsInner = numParallel[3] * numParallel[4];\n"%(indent * level)
            code += "%sauto planInner = hptt::create_plan( permA, %d, 1.0, A, sizeA, ldaA, 0, NULL, ldbA, hptt::ESTIMATE, numThreadsInner);\n"%(level*indent, len(size))
        return code
 
@@ -744,12 +745,40 @@ class Gett:
        code = code[:-1] + "};\n"
 
        if( scale ):
-           code += "%sint numThreadsOuter = numParallel[1] * numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sconst int numThreadsOuter = numParallel[2] * numParallel[3] * numParallel[4];\n"%(indent * level)
            code += "%sauto planOuter = hptt::create_plan( permB, %d, alpha, B, sizeB, ldaB, 0, NULL, ldbB, hptt::ESTIMATE, numThreadsOuter);\n"%(level*indent, len(size))
        else:
-           code += "%sint numThreadsInner = numParallel[2] * numParallel[3];\n"%(indent * level)
+           code += "%sconst int numThreadsInner = numParallel[3] * numParallel[4];\n"%(indent * level)
            code += "%sauto planInner = hptt::create_plan( permB, %d, 1.0, B, sizeB, ldaB, 0, NULL, ldbB, hptt::ESTIMATE, numThreadsInner);\n"%(level*indent, len(size))
        return code
+
+    def getScaleCodeC(self):
+        code =  "   if(numParallel[1] > 1){ // scale C\n"
+        code += "   #pragma omp parallel for num_threads(maxThreads)\n"
+        code += "      for( int n = 0; n < N_ * M_; ++n )\n"
+        code += "         for( int j = 0; j < numParallel[1]; ++j )\n"
+        code += "            if( j == 0 )\n"
+        code += "               if(beta == 0)\n"
+        code += "                  packedC[j][n] = 0;\n"
+        code += "               else\n"
+        code += "                  packedC[j][n] = beta * C[n];\n"
+        code += "            else\n"
+        code += "               packedC[j][n] = 0;\n"
+        code += "   }\n"
+        return code
+
+    def getReduceCodeC(self):
+        code =  "  if(numParallel[1] > 1){ // scale C\n"
+        code += "  #pragma omp parallel for num_threads(maxThreads)\n"
+        code += "     for( int n = 0; n < N_ * M_; ++n )\n"
+        code += "     {\n"
+        code += "        float tmp = 0;\n"
+        code += "        for( int j = 0; j < numParallel[1]; ++j )\n"
+        code += "           tmp += packedC[j][n];\n"
+        code += "        C[n] = tmp;\n"
+        code += "     }\n"
+        code += "  }\n"
+        return code
 
     def getParallelHelperCode(self):
         code = "\n"
@@ -835,7 +864,7 @@ class Gett:
     def getAllParallelismStrategies(self, availableParallelism):
         primes = getPrimeFactors(self.numThreads)
         primes.sort(reverse=True)
-        parallelismStrategies = [[1,1,1,1]]
+        parallelismStrategies = [[1,1,1,1,1]]
         return self.getAllParallelismStrategies_(availableParallelism, primes, parallelismStrategies )
 
     def getLoadBalance(self, availableParallelism, parallelismStrategy):
@@ -865,7 +894,7 @@ class Gett:
         cost = 1.0 # optimum
         l3size = self.arch.L3_SIZE
         if( self.arch.L3isInclusive ):
-            l3size -= parallelismStrategy[0] * parallelismStrategy[1] * paddedSizeInner # the parallelismStrategy[0] factor could be avoided, but this puts more stress on the coherency protocol
+            l3size -= parallelismStrategy[0] * parallelismStrategy[2] * paddedSizeInner # the parallelismStrategy[0] factor could be avoided, but this puts more stress on the coherency protocol
 
         if( parallelismStrategy[0] * paddedSizeOuter > 0.8 * l3size ): #make sure that every thing fits into cache
             if( l3size <= 0 ):
@@ -875,6 +904,7 @@ class Gett:
         
         cost *= self.getLoadBalance(availParallelism, parallelismStrategy)
 
+        cost *= 1.065**(parallelismStrategy[1]-1) # penalize parallelization of k loop (due to overhead)
         cost *= 1.065**(parallelismStrategy[-1]-1) # penalize parallelization of innermost loop around the micro-kernel. Rationale: load of sliver from L3 will be loaded redundantly by all threads
         return cost
 
@@ -884,18 +914,24 @@ class Gett:
         Determines how the four loops should be parallelized
         """
 
-        parallelizationStrategy = [1 for i in range(4)]
-        availParallelism = [1 for i in range(4)]
+        parallelizationStrategy = [1 for i in range(5)]
+        availParallelism = [1 for i in range(5)]
         if(AisOuter):
             availParallelism[0] = (self.sizeM + mc-1) / mc
-            availParallelism[1] = (self.sizeN + nc-1) / nc
-            availParallelism[2] = mc / mr
-            availParallelism[3] = nc / nr
+            availParallelism[2] = (self.sizeN + nc-1) / nc
+            availParallelism[3] = mc / mr
+            availParallelism[4] = nc / nr
         else:
             availParallelism[0] = (self.sizeN + nc-1) / nc
-            availParallelism[1] = (self.sizeM + mc-1) / mc
-            availParallelism[2] = nc / nr
-            availParallelism[3] = mc / mr
+            availParallelism[2] = (self.sizeM + mc-1) / mc
+            availParallelism[3] = nc / nr
+            availParallelism[4] = mc / mr
+        if( self.sizeM * self.sizeN <= 64**2 ): # only activate parallelK if it is absolutely necessary
+            availParallelism[1] = (self.sizeK + kc-1) / kc
+        elif( self.sizeM * self.sizeN <= 96**2 ): # allow just a little parallelism in K
+            availParallelism[1] = min(4,(self.sizeK + kc-1) / kc)
+        else:
+            availParallelism[1] = 1
 
         parallelismStragegies = self.getAllParallelismStrategies(availParallelism)
         parallelismStragegies.sort(key=lambda strategy : self.getParallelismStrategyCost(mc, nc, kc, mr, nr, AisOuter, availParallelism, strategy))
@@ -904,7 +940,7 @@ class Gett:
 
         # we prefer to parallelize the third loop around the micro kernel (private copies in L2)
         ret = "%sint parallelStrategyId = 0;\n"%(self.indent)
-        ret += "%sint numParallelStrategies[%d][4] = {\n"%(self.indent,min(8,parallelismStragegies))
+        ret += "%sint numParallelStrategies[%d][5] = {\n"%(self.indent,min(8,parallelismStragegies))
         for i in range(min(8,len(parallelismStragegies))):
             tmp = ""
             for a in parallelismStragegies[i]:
@@ -1170,6 +1206,8 @@ class Gett:
                                                    code += "static double time_pack_c;\n"
                                                    code += "static double bytes_pack_c;\n"
 
+                                               code += self.getParallelHelperCode()
+
                                                ###############################
                                                # emit micro kernels
                                                ###############################
@@ -1194,8 +1232,6 @@ class Gett:
                                                      nIndRemainder)
                                                ##############################
 
-                                               code += self.getParallelHelperCode()
-
                                                key = (variant_id, mc,nc,kc,mc1, nc1, mr, nr, indicesStr)
                                                
                                                gettName = self.getName(key)
@@ -1212,6 +1248,7 @@ class Gett:
                                                if( variant[0] == 'n' ):
                                                    code += "%sconst int numTasksOuter = N_/NC;\n"%(self.indent)
                                                    code += "%sconst int numTasksInner = M_/MC;\n"%(self.indent)
+                                                   code += "%sconst int numTasksK = K_/KC;\n"%(self.indent)
                                                    code += "%sconst int numTasksMacroOuter = NC/NR;\n"%(self.indent)
                                                    code += "%sconst int numTasksMacroInner = MC/MR;\n"%(self.indent)
                                                    code += "%sconstexpr uint64_t paddedSizeOuter = ((NC * KC * sizeof(%s) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent,self.floatType)
@@ -1219,21 +1256,25 @@ class Gett:
                                                else:
                                                    code += "%sconst int numTasksOuter = M_/MC;\n"%(self.indent)
                                                    code += "%sconst int numTasksInner = N_/NC;\n"%(self.indent)
+                                                   code += "%sconst int numTasksK = K_/KC;\n"%(self.indent)
                                                    code += "%sconst int numTasksMacroOuter = MC/MR;\n"%(self.indent)
                                                    code += "%sconst int numTasksMacroInner = NC/NR;\n"%(self.indent)
                                                    code += "%sconstexpr uint64_t paddedSizeOuter = ((MC * KC * sizeof(%s) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent,self.floatType)
                                                    code += "%sconstexpr uint64_t paddedSizeInner = ((NC * KC * sizeof(%s) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent,self.floatType)
+                                               code += "%sconstexpr uint64_t paddedSizeC = ((M_ * N_ * sizeof(%s) + 63) / 64) * 64; // pad to full cachelines\n"%(self.indent,self.floatType) #TODO
                                                parallelismStr = self.getParallelismStrategy(mc, nc, kc, mr, nr, variant[0] == 'm')
                                                code += "%s\n"%(parallelismStr)
                                                code += "%sauto par5 = std::getenv(\"TCCG_PAR_LOOP5\");\n"%(self.indent)
                                                code += "%sif( par5 ) numParallel[0] = std::max(1, atoi(par5));\n"%(self.indent)
+                                               code += "%sauto par4 = std::getenv(\"TCCG_PAR_LOOP4\");\n"%(self.indent)
+                                               code += "%sif( par4 ) numParallel[1] = std::max(1, atoi(par4));\n"%(self.indent)
                                                code += "%sauto par3 = std::getenv(\"TCCG_PAR_LOOP3\");\n"%(self.indent)
-                                               code += "%sif( par3 ) numParallel[1] = std::max(1, atoi(par3));\n"%(self.indent)
+                                               code += "%sif( par3 ) numParallel[2] = std::max(1, atoi(par3));\n"%(self.indent)
                                                code += "%sauto par2 = std::getenv(\"TCCG_PAR_LOOP2\");\n"%(self.indent)
-                                               code += "%sif( par2 ) numParallel[2] = std::max(1, atoi(par2));\n"%(self.indent)
+                                               code += "%sif( par2 ) numParallel[3] = std::max(1, atoi(par2));\n"%(self.indent)
                                                code += "%sauto par1 = std::getenv(\"TCCG_PAR_LOOP1\");\n"%(self.indent)
-                                               code += "%sif( par1 ) numParallel[3] = std::max(1, atoi(par1));\n"%(self.indent)
-                                               code += "%sconst int numThreadsGlobal = numParallel[0] * numParallel[1] * numParallel[2] * numParallel[3];\n"%(self.indent)
+                                               code += "%sif( par1 ) numParallel[4] = std::max(1, atoi(par1));\n"%(self.indent)
+                                               code += "%sconst int numThreadsGlobal = numParallel[0] * numParallel[1] * numParallel[2] * numParallel[3] * numParallel[4];\n"%(self.indent)
                                                code += "\n"
                                                code += self.createTransposePlanA(sizeA, permA, lda, ldaOut, 1, variant[0] == 'm')
                                                code += self.createTransposePlanB(sizeB, permB, ldb, ldbOut, 1, variant[0] == 'n')
@@ -1241,8 +1282,9 @@ class Gett:
                                                code += "%s/*\n"%(self.indent)
                                                code += "%s * Allocate memory for packing buffers\n"%(self.indent)
                                                code += "%s */\n"%(self.indent)
-                                               code += "%sconst uint64_t requestedSize = paddedSizeInner * (numParallel[0] * numParallel[1]) +\n"%(self.indent)
-                                               code += "%s                             paddedSizeOuter * (numParallel[0]);\n"%(self.indent)
+                                               code += "%sconst uint64_t requestedSize = paddedSizeInner * (numParallel[0] * numParallel[1] * numParallel[2]) +\n"%(self.indent)
+                                               code += "%s                               paddedSizeOuter * (numParallel[0] * numParallel[1]) +\n"%(self.indent)
+                                               code += "%s                               paddedSizeC * numParallel[1];\n"%(self.indent)
                                                code += "%sif( requestedSize > memBroker.size() )\n"%(self.indent)
                                                code += "%s{\n"%(self.indent)
                                                code += "%s   if( memBroker.isInit() )\n"%(self.indent)
@@ -1252,59 +1294,77 @@ class Gett:
                                                code += "%s\n"%(self.indent)
                                                code += "%splanOuter->resetThreadIds();\n"%(self.indent)
                                                code += "%splanInner->resetThreadIds();\n"%(self.indent)
-                                               code += "%shptt::Transpose<%s>* plansOuter[numParallel[0]];\n"%(self.indent,self.floatType)
-                                               code += "%shptt::Transpose<%s>* plansInner[numParallel[0]][numParallel[1]];\n"%(self.indent,self.floatType)
-                                               code += "%s%s* packedOuter[numParallel[0]];\n"%(self.indent,self.floatType)
-                                               code += "%s%s* packedInner[numParallel[0]][numParallel[1]];\n"%(self.indent,self.floatType)
-                                               code += "%sBarrier barrierOuter[numParallel[0]];\n"%(self.indent)
-                                               code += "%sBarrier barrierInner[numParallel[0]][numParallel[1]];\n"%(self.indent)
+                                               code += "%shptt::Transpose<%s>* plansOuter[numParallel[0]][numParallel[1]];\n"%(self.indent,self.floatType)
+                                               code += "%shptt::Transpose<%s>* plansInner[numParallel[0]][numParallel[1]][numParallel[2]];\n"%(self.indent,self.floatType)
+                                               code += "%s%s* packedOuter[numParallel[0]][numParallel[1]];\n"%(self.indent,self.floatType)
+                                               code += "%s%s* packedInner[numParallel[0]][numParallel[1]][numParallel[2]];\n"%(self.indent,self.floatType)
+                                               code += "%s%s* packedC[numParallel[1]];\n"%(self.indent,self.floatType)
+                                               code += "%sBarrier barrierOuter[numParallel[0]][numParallel[1]];\n"%(self.indent)
+                                               code += "%sBarrier barrierK[numParallel[1]];\n"%(self.indent)
+                                               code += "%sBarrier barrierInner[numParallel[0]][numParallel[1]][numParallel[2]];\n"%(self.indent)
                                                code += "%sfor(int j=0; j < numParallel[0]; ++j){\n"%(self.indent)
-                                               code += "%s   plansOuter[j] = new hptt::Transpose<%s>(*planOuter);\n"%(self.indent,self.floatType)
-                                               code += "%s   barrierOuter[j].init(numParallel[1] * numParallel[3] * numParallel[2]);\n"%(self.indent)
-                                               code += "%s   packedOuter[j] = (%s*) memBroker.requestMemory(paddedSizeOuter);\n"%(self.indent,self.floatType)
-                                               code += "%s   for(int i=0; i < numParallel[1]; ++i)\n"%(self.indent)
-                                               code += "%s   {\n"%(self.indent)
-                                               code += "%s      plansInner[j][i] = new hptt::Transpose<%s>(*planInner);\n"%(self.indent,self.floatType)
-                                               code += "%s      barrierInner[j][i].init(numParallel[3] * numParallel[2] );\n"%(self.indent)
-                                               code += "%s      packedInner[j][i] = (%s*) memBroker.requestMemory(paddedSizeInner);\n"%(self.indent,self.floatType)
+                                               code += "%s   for(int k=0; k < numParallel[1]; ++k){\n"%(self.indent)
+                                               code += "%s      plansOuter[j][k] = new hptt::Transpose<%s>(*planOuter);\n"%(self.indent,self.floatType)
+                                               code += "%s      barrierOuter[j][k].init(numThreadsOuter);\n"%(self.indent)
+                                               code += "%s      packedOuter[j][k] = (%s*) memBroker.requestMemory(paddedSizeOuter);\n"%(self.indent,self.floatType)
+                                               code += "%s      for(int i=0; i < numParallel[2]; ++i)\n"%(self.indent)
+                                               code += "%s      {\n"%(self.indent)
+                                               code += "%s         plansInner[j][k][i] = new hptt::Transpose<%s>(*planInner);\n"%(self.indent,self.floatType)
+                                               code += "%s         barrierInner[j][k][i].init(numThreadsInner);\n"%(self.indent)
+                                               code += "%s         packedInner[j][k][i] = (%s*) memBroker.requestMemory(paddedSizeInner);\n"%(self.indent,self.floatType)
+                                               code += "%s      }\n"%(self.indent)
                                                code += "%s   }\n"%(self.indent)
                                                code += "%s}\n"%(self.indent)
-                                               code += "    auto maxThreads = std::min(omp_get_max_threads(), numThreadsGlobal);\n"
+                                               code += "%sfor(int j=0; j < numParallel[1]; ++j){\n"%(self.indent)
+                                               code += "%s    barrierK[j].init(numParallel[0] * numParallel[2] * numParallel[3] * numParallel[4]);\n"%(self.indent)
+                                               code += "%s    if( numParallel[1] == 1)\n"%(self.indent)
+                                               code += "%s      packedC[j] = C;\n"%(self.indent)
+                                               code += "%s    else\n"%(self.indent)
+                                               code += "%s      packedC[j] = (%s*) memBroker.requestMemory(paddedSizeC);\n"%(self.indent,self.floatType)
+                                               code += "%s}\n"%(self.indent)
+                                               code += "%sauto maxThreads = std::min(omp_get_max_threads(), numThreadsGlobal);\n"%(self.indent)
+                                               code += self.getScaleCodeC()
                                                code += "#pragma omp parallel for num_threads(maxThreads) schedule(static,1)\n"
                                                code += "   for(int taskId=0; taskId < numThreadsGlobal; ++taskId)\n"
                                                code += "{\n"
                                                code += "   int numThreadsRemaining = numThreadsGlobal;\n"
                                                code += "\n"
-                                               code += "   int myStart[4]; int myEnd[4];\n"
-                                               code += "   int threadId[4] = { taskId, 0,0,0 };\n"
+                                               code += "   int myStart[5]; int myEnd[5];\n"
+                                               code += "   int threadId[5] = { taskId,0,0,0,0 };\n"
                                                code += "\n"
                                                code += "   //------------------------------\n"
                                                code += "   int level = 0;\n"
                                                code += "   numThreadsRemaining /= numParallel[level];\n"
                                                code += "   int threadIdCommOuter;\n"
                                                code += "   getStartEnd( numTasksOuter, numParallel[level], threadId[level], numThreadsRemaining, threadIdCommOuter, threadId[level+1], myStart[level], myEnd[level]);\n"
-                                               code += "   %s* myPackedOuter = packedOuter[threadIdCommOuter];\n"%self.floatType
+                                               code += "   //------------------------------\n"
+                                               code += "   level++; //no parallelism at level 1 yet\n"
+                                               code += "   numThreadsRemaining /= numParallel[level];\n"
+                                               code += "   int threadIdCommK, threadIdCommOuterMacro, threadIdCommInnerMacro, dummy;\n"
+                                               code += "   getStartEnd( numTasksK, numParallel[level], threadId[level], numThreadsRemaining, threadIdCommK, threadId[level+1], myStart[level], myEnd[level]);\n"
                                                code += "   //------------------------------\n"
                                                code += "   level++;\n"
                                                code += "   numThreadsRemaining /= numParallel[level];\n"
                                                code += "   int threadIdCommInner;\n"
                                                code += "   getStartEnd( numTasksInner, numParallel[level], threadId[level], numThreadsRemaining, threadIdCommInner, threadId[level+1], myStart[level], myEnd[level]);\n"
-                                               code += "   %s* myPackedInner = packedInner[threadIdCommOuter][threadIdCommInner];\n"%self.floatType
                                                code += "   //------------------------------\n"
                                                code += "   level++;\n"
                                                code += "   numThreadsRemaining /= numParallel[level];\n"
-                                               code += "   int dummy, dummy2;\n"
-                                               code += "   getStartEnd( numTasksMacroOuter, numParallel[level], threadId[level], numThreadsRemaining, dummy, threadId[level+1], myStart[level], myEnd[level]);\n"
+                                               code += "   getStartEnd( numTasksMacroOuter, numParallel[level], threadId[level], numThreadsRemaining, threadIdCommOuterMacro, threadId[level+1], myStart[level], myEnd[level]);\n"
                                                code += "   //------------------------------\n"
                                                code += "   level++;\n"
                                                code += "   numThreadsRemaining = 1;\n"
-                                               code += "   getStartEnd( numTasksMacroInner, numParallel[level], threadId[level], numThreadsRemaining, dummy, dummy2, myStart[level], myEnd[level]);\n"
+                                               code += "   getStartEnd( numTasksMacroInner, numParallel[level], threadId[level], numThreadsRemaining, threadIdCommInnerMacro, dummy, myStart[level], myEnd[level]);\n"
                                                code += "\n"
                                                code += "   //------------------------------\n"
-                                               code += "   auto myPlanOuter = plansOuter[threadIdCommOuter];\n"
-                                               code += "   auto myPlanInner = plansInner[threadIdCommOuter][threadIdCommInner];\n"
-                                               code += "   auto *myBarrierOuter = &(barrierOuter[threadIdCommOuter]);\n"
-                                               code += "   auto *myBarrierInner = &(barrierInner[threadIdCommOuter][threadIdCommInner]);\n"
+                                               code += "   %s* myPackedOuter = packedOuter[threadIdCommOuter][threadIdCommK];\n"%self.floatType
+                                               code += "   %s* myPackedInner = packedInner[threadIdCommOuter][threadIdCommK][threadIdCommInner];\n"%self.floatType
+                                               code += "   %s* myPackedC = packedC[threadIdCommK];\n"%self.floatType
+                                               code += "   auto myPlanOuter = plansOuter[threadIdCommOuter][threadIdCommK];\n"
+                                               code += "   auto myPlanInner = plansInner[threadIdCommOuter][threadIdCommK][threadIdCommInner];\n"
+                                               code += "   auto *myBarrierOuter = &(barrierOuter[threadIdCommOuter][threadIdCommK]);\n"
+                                               code += "   auto *myBarrierInner = &(barrierInner[threadIdCommOuter][threadIdCommK][threadIdCommInner]);\n"
+                                               code += "   auto *myBarrierK = &(barrierK[threadIdCommK]);\n"
                                                code += "   myPlanOuter->setOutputPtr(myPackedOuter); \n"
                                                code += "   myPlanInner->setOutputPtr(myPackedInner);\n"
                                                code += "   int myThreadId = omp_get_thread_num();\n"
@@ -1324,6 +1384,15 @@ class Gett:
                                                      Ahat, Bhat, Chat)
 
                                                code += "} //parallel\n"
+                                               code += self.getReduceCodeC()
+
+                                               #code += "%sfor(int j=0; j < numParallel[0]; ++j){\n"%(self.indent)
+                                               #code += "%s   for(int k=0; k < numParallel[1]; ++k){\n"%(self.indent)
+                                               #code += "%s      free(plansOuter[j][k]);\n"%(self.indent)
+                                               #code += "%s      for(int i=0; i < numParallel[2]; ++i)\n"%(self.indent)
+                                               #code += "%s         free(plansInner[j][k][i]);\n"%(self.indent)
+                                               #code += "%s   }\n"%self.indent
+                                               #code += "%s}\n"%self.indent
                                                code += "   memBroker.reset();\n"
                                                code += "} //gett\n"
 
