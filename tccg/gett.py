@@ -894,18 +894,22 @@ class Gett:
         cost = 1.0 # optimum
         l3size = self.arch.L3_SIZE
         if( self.arch.L3isInclusive ):
-            l3size -= parallelismStrategy[0] * parallelismStrategy[2] * paddedSizeInner # the parallelismStrategy[0] factor could be avoided, but this puts more stress on the coherency protocol
+            l3size -= parallelismStrategy[0] * parallelismStrategy[1] * parallelismStrategy[2] * paddedSizeInner # the parallelismStrategy[0] factor could be avoided, but this puts more stress on the coherency protocol
 
-        if( parallelismStrategy[0] * paddedSizeOuter > 0.8 * l3size ): #make sure that every thing fits into cache
+        if( parallelismStrategy[0] * parallelismStrategy[1] * paddedSizeOuter > 0.8 * l3size ): #make sure that every thing fits into cache
             if( l3size <= 0 ):
                 cost *= 4.0
             else:
-                cost *= min(4.0, parallelismStrategy[0] * paddedSizeOuter / 0.8 / l3size)
+                cost *= min(4.0, parallelismStrategy[0] * parallelismStrategy[1] * paddedSizeOuter / 0.8 / l3size)
         
         cost *= self.getLoadBalance(availParallelism, parallelismStrategy)
 
-        cost *= 1.065**(parallelismStrategy[1]-1) # penalize parallelization of k loop (due to overhead)
-        cost *= 1.065**(parallelismStrategy[-1]-1) # penalize parallelization of innermost loop around the micro-kernel. Rationale: load of sliver from L3 will be loaded redundantly by all threads
+        cost *= 1.025**(parallelismStrategy[1]-1) # penalize parallelization of k loop (due to overhead)
+        extraPenalty = 0.0
+        if( availParallelism[1] > 1 ):
+            extraPenalty = 0.04 # perfer to parallelize the k-loop over macro-kernel loops (in the case of a small C)
+        cost *= (1.025+extraPenalty)**(parallelismStrategy[-2]-1) # penalize parallelization of outermost loop around the micro-kernel. Rationale: the packed A will be replicated in many L2 caches
+        cost *= (1.065+extraPenalty)**(parallelismStrategy[-1]-1) # penalize parallelization of innermost loop around the micro-kernel. Rationale: load of sliver from L3 will be loaded redundantly by all threads
         return cost
 
 
