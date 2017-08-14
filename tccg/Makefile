@@ -27,8 +27,8 @@ OBJ=$(SRC:.cpp=.o)
 CPU: 
 	${MAKE} clean 
 	${MAKE} CPU2
-CPU2: INCLUDE_PATH=-I${HPTT_ROOT}/src
-CPU2: CXX_FLAGS+=-L${HPTT_ROOT}/lib -lhptt
+CPU2: INCLUDE_PATH=-I${HPTT_ROOT}/include/ -I${TCL_ROOT}/include/
+CPU2: CXX_FLAGS+=-L${HPTT_ROOT}/lib -lhptt ${TCL_ROOT}/lib/libtcl.so
 CPU2: all
 
 GPU:

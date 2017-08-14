@@ -12,7 +12,7 @@ contraction where the sum over 'k' as well as the loops over 'i' and 'j' are
 implicit. Further examples of tensor contractions are: C[i0,j0,j1] = A[i0,k0] * B[j1,k0,j0];
 C[i0,j0,j1,i1] = A[i0,k0,i1] * B[j1,k0,j0]; C[i0,j0,j1,i1] = A[k0,i0,k1,i1] * B[k1,j1,k0,j0] ...
 
-Current version: **v0.1.1**
+Current version: **v0.1.2**
 
 # Key Features
 --------------
@@ -57,6 +57,7 @@ In order to use TCCG, a working C compiler and some BLAS library (e.g., Intel's 
 * Some BLAS library (e.g., [BLIS](https://github.com/flame/blis), [ATLAS](http://math-atlas.sourceforge.net/))
 * High-Performance Tensor Transposition (HPTT) library  
 * Python (tested with v2.7.5 and v2.7.9)
+* Tensor Contraction Library [TCL](https://github.com/springer13/tcl) (OPTIONAL)
 
 
 # Install

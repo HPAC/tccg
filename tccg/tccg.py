@@ -299,6 +299,7 @@ class Tccg:
         ttgtVersions = {}
         gemmVersions = {}
         loopVersions = {}
+        tclFlops = -1
         for line in proc.stdout:
             Line = line
             line = line.lower()
@@ -324,6 +325,8 @@ class Tccg:
                     ttgtVersions[implementationType] = flops
                 elif( implementationType.startswith("gemm") ):
                     gemmVersions[implementationType] = flops
+                elif( implementationType.startswith("tcl") ):
+                    tclFlops = flops
                 else:
                     if( not implementationType.startswith("packing") ):
                         tccg_util.tccError("unknown implementation."+ implementationType )
@@ -420,7 +423,7 @@ class Tccg:
 
         self.emitFinalCode(maxFlopsGETT, maxFlopsLoop, maxFlopsttgt, bestKey)
         print "Best gett-based implementation (%s) attained: %.2f GFLOPS/s"%(bestGETTVersion, maxFlopsGETT)
-        print "Best Loop/TTGT/GETT/reference/GEMM: %.2f / %.2f / %.2f / %.2f / %.2f GFLOPS"%(maxFlopsLoop, maxFlopsttgt, maxFlopsGETT,referenceFlops, maxFlopsGEMM)
+        print "Best Loop/TTGT/GETT/reference/GEMM/TCL: %.2f / %.2f / %.2f / %.2f / %.2f / %.2f GFLOPS"%(maxFlopsLoop, maxFlopsttgt, maxFlopsGETT,referenceFlops, maxFlopsGEMM, tclFlops)
 
         # commit changes to database
         connection.commit()
@@ -813,6 +816,10 @@ class Tccg:
        code += "#include <stdio.h>\n"
        code += "#include <float.h>\n"
        code += "\n"
+
+       if(self.args.useTCL):
+           code += "#include <tcl.h>\n"
+       code += "\n"
        code += "#include \"memoryBroker.h\"\n"
        code += "MemoryBroker memBroker;\n"
        code += self.getTrashCache(1)
@@ -918,6 +925,35 @@ class Tccg:
            code +="   cublasHandle_t cublas_handle;\n"
            code +="   cublasCreate(&cublas_handle);\n"
 
+       tclSizeA = ""
+       tclIndicesA = ""
+       for i in range(len(self.A.indices)):
+            tclSizeA += "%d,"%(self.A.indices[i].size)
+            tclIndicesA += "%s,"%(self.A.indices[i].label)
+       tclSizeA = tclSizeA[:-1]
+       tclSizeB = ""
+       tclIndicesB = ""
+       for i in range(len(self.B.indices)):
+            tclSizeB += "%d,"%(self.B.indices[i].size)
+            tclIndicesB += "%s,"%(self.B.indices[i].label)
+       tclSizeB = tclSizeB[:-1]
+       tclSizeC = ""
+       tclIndicesC = ""
+       for i in range(len(self.C.indices)):
+            tclSizeC += "%d,"%(self.C.indices[i].size)
+            tclIndicesC += "%s,"%(self.C.indices[i].label)
+       tclSizeC = tclSizeC[:-1]
+       code += "   printf(\"C[%s] = A[%s] * B[%s]\\n\");\n"%(tclIndicesC[:-1], tclIndicesA[:-1], tclIndicesB[:-1])
+       code += "   printf(\"C: %s, A: %s, B: %s\\n\");\n"%(tclSizeC, tclSizeA, tclSizeB)
+       tclIndicesA = "\"" + tclIndicesA[:-1] + "\""
+       tclIndicesB = "\"" + tclIndicesB[:-1] + "\""
+       tclIndicesC = "\"" + tclIndicesC[:-1] + "\""
+
+       if(self.args.useTCL):
+           code += "   tcl::Tensor<float> tensorA({%s}, A);\n"%tclSizeA
+           code += "   tcl::Tensor<float> tensorB({%s}, B);\n"%tclSizeB
+           code += "   tcl::Tensor<float> tensorC({%s}, C);\n"%tclSizeC
+
        code += "   //initialize A\n"
        code +="   #pragma omp parallel for\n"
        code += "   for(size_t i=0;i < %s; ++i)\n"%sizeA
@@ -951,6 +987,7 @@ class Tccg:
        code += "   int mRepeat = 2;\n"
        code += "   int nRepeat = 4;\n"
 
+       code += "   double tcl_time = FLT_MAX;\n"
        code += "   double ttgemmt_time[%d];\n"%self.ttgemmt.numCandidates()
        code += "   double gemm_time[%d];\n"%self.gemm.numCandidates()
        code += "   double loopGemm_time[%d];\n"%self.gemmLoop.numCandidates()
@@ -976,7 +1013,10 @@ class Tccg:
            code += "      restore(C_copy, C_ref, %s);\n"%sizeC
            code += "      trashCache(trash1, trash2, largerThanL3);\n"
            code += "      double start = omp_get_wtime();\n"
-           code += "      referenceVersion(A, B, C_ref, alpha, beta);\n"
+           if( len(self.ttgemmt.candidates) > 0 ):
+               code += "      ttgemmt_%s(A, B, C_ref, alpha, beta, work_);\n"%self.ttgemmt.candidates[self.ttgemmt.candidates.keys()[0]]
+           else:
+               code += "      referenceVersion(A, B, C_ref, alpha, beta);\n"
            code += "      double tmp = omp_get_wtime() - start;\n"
            code += "      ref_time = (tmp < ref_time) ? tmp : ref_time;\n"
            code += "  }\n"
@@ -1065,33 +1105,33 @@ class Tccg:
        ############################
        code += "   //launch gemm kernels\n"
        count = 0
-       for candidate in self.ttgemmt.candidates:
-           code += "  {\n"
-           code += "   int success = 1;\n"
-           code += "   for(int i = 0; i < nRepeat; i++){\n"
-           code += "      restore(C_copy, C, %s);\n"%sizeC
-           code += "      trashCache(trash1, trash2, largerThanL3);\n"
-           if( self.args.architecture == "cuda"):
-               code +="      cudaMemcpy(C_d, C, sizeof(%s) * %s, cudaMemcpyHostToDevice);\n"%(self.floatType,sizeC)
-           code += "      double start = omp_get_wtime();\n"
-           if( self.args.architecture == "cuda"):
-               code += "      int ret = gemm_%s(cublas_handle, A_d, B_d, C_d, alpha, beta, work_d);\n"%candidate
-               code += "      cudaDeviceSynchronize();\n"
-               code += "      if( ret != 0 || cudaSuccess != cudaGetLastError() ) { \n"
-               code += "            printf(\"ERROR: version 'gemm_%s' failed\\n\");\n"%candidate
-               code += "            success = 0;\n"
-               code += "            break;\n"
-               code += "      }\n"
-           else:
-               code += "      gemm_%s(A, B, C, alpha, beta, work_);\n"%candidate
-           code += "      double tmp = omp_get_wtime() - start;\n"
-           code += "      gemm_time[%d] = (tmp < gemm_time[%d]) ? tmp : gemm_time[%d];\n"%(count, count, count)
-           code += "   }\n"
-           code += "   if( success  && r == (mRepeat-1))\n"
-           code += "     printf(\"gemm_%s: %%.2f GFLOPS\\n\", flops / 1e9 / gemm_time[%d]);\n"%(candidate,count)
-           code += "  }\n"
-           count += 1
-
+       if( self.gemm.numCandidates() > 0 ):
+           for candidate in self.ttgemmt.candidates:
+               code += "  {\n"
+               code += "   int success = 1;\n"
+               code += "   for(int i = 0; i < nRepeat; i++){\n"
+               code += "      restore(C_copy, C, %s);\n"%sizeC
+               code += "      trashCache(trash1, trash2, largerThanL3);\n"
+               if( self.args.architecture == "cuda"):
+                   code +="      cudaMemcpy(C_d, C, sizeof(%s) * %s, cudaMemcpyHostToDevice);\n"%(self.floatType,sizeC)
+               code += "      double start = omp_get_wtime();\n"
+               if( self.args.architecture == "cuda"):
+                   code += "      int ret = gemm_%s(cublas_handle, A_d, B_d, C_d, alpha, beta, work_d);\n"%candidate
+                   code += "      cudaDeviceSynchronize();\n"
+                   code += "      if( ret != 0 || cudaSuccess != cudaGetLastError() ) { \n"
+                   code += "            printf(\"ERROR: version 'gemm_%s' failed\\n\");\n"%candidate
+                   code += "            success = 0;\n"
+                   code += "            break;\n"
+                   code += "      }\n"
+               else:
+                   code += "      gemm_%s(A, B, C, alpha, beta, work_);\n"%candidate
+               code += "      double tmp = omp_get_wtime() - start;\n"
+               code += "      gemm_time[%d] = (tmp < gemm_time[%d]) ? tmp : gemm_time[%d];\n"%(count, count, count)
+               code += "   }\n"
+               code += "   if( success  && r == (mRepeat-1))\n"
+               code += "     printf(\"gemm_%s: %%.2f GFLOPS\\n\", flops / 1e9 / gemm_time[%d]);\n"%(candidate,count)
+               code += "  }\n"
+               count += 1
 
        ############################
        # TTGEMMT version
@@ -1134,6 +1174,34 @@ class Tccg:
            code += "      printf(\"ttgemmt_%s: %%.2f GFLOPS\\n\", flops / 1e9 / ttgemmt_time[%d]);\n"%(candidate,count)
            code += "  }\n"
            count += 1
+
+
+       ############################
+       # TCL version
+       ############################
+       if(self.args.useTCL):
+           code += "   //launch TCL kernels\n"
+           code += "  {\n"
+           code += "   int success = 1;\n"
+           code += "   for(int i = 0; i < nRepeat; i++){\n"
+           code += "      restore(C_copy, C, %s);\n"%sizeC
+           code += "      trashCache(trash1, trash2, largerThanL3);\n"
+           code += "      double start = omp_get_wtime();\n"
+           code += "      tcl::multiply(alpha, tensorA[%s], tensorB[%s], beta, tensorC[%s],1);\n"%(tclIndicesA, tclIndicesB, tclIndicesC)
+           code += "      double tmp = omp_get_wtime() - start;\n"
+           code += "      tcl_time = (tmp < tcl_time) ? tmp : tcl_time;\n"
+           if( self.args.testing == 1):
+               code += "\n"
+               code += "      if( i==0 ){\n"
+               code += "         if( equal(C_ref, C, %s) != 1 ){\n"%sizeC
+               code += "            printf(\"ERROR: version 'tcl' failed\\n\");\n"
+               code += "            success = 0;\n"
+               code += "         }\n"
+               code += "      }\n"
+           code += "   }\n"
+           code += "   if( success  && r == (mRepeat-1))\n"
+           code += "      printf(\"tcl: %.2f GFLOPS\\n\", flops / 1e9 / tcl_time);\n"
+           code += "  }\n"
 
        code += "  sleep(0.5);\n"
        code += " }\n"
@@ -1194,6 +1262,7 @@ def main():
     parser.add_argument('--noLoG', action="store_true", help='Do not use LoG implementation')
     parser.add_argument('--noGEMM', action="store_true", help='Do not time equally sized GEMM')
     parser.add_argument('--noTTGT', action="store_true", help='Do not use TTGT implementation')
+    parser.add_argument('--useTCL', action="store_true", help='Compare against TCL library')
     parser.add_argument('--useDynamicMemory', action="store_true", help='use dynamic memory for the small tiles. This might be required of the stack size is insufficient. However, this might degrade performance! (deactivated by default)')
     parser.add_argument('--timePacking', action="store_true", help='times packing routines.')
     parser.add_argument('--ignoreDatabase', action="store_true", help='ignore SQL database. This prevents a database lookup for an existing solution.')
@@ -1273,6 +1342,7 @@ def main():
     tccgArgs.verbose = args.verbose
     tccgArgs.gettOnly = args.gettOnly
     tccgArgs.noGETT = args.noGETT
+    tccgArgs.useTCL = args.useTCL
     tccgArgs.noTTGT = args.noTTGT
     tccgArgs.noGEMM = args.noGEMM
     tccgArgs.noLoG = args.noLoG
