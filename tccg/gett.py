@@ -768,7 +768,7 @@ class Gett:
         return code
 
     def getReduceCodeC(self):
-        code =  "  if(numParallel[1] > 1){ // scale C\n"
+        code =  "  if(numParallel[1] > 1){ // reduce C\n"
         code += "  #pragma omp parallel for num_threads(maxThreads)\n"
         code += "     for( int n = 0; n < N_ * M_; ++n )\n"
         code += "     {\n"
@@ -930,10 +930,8 @@ class Gett:
             availParallelism[2] = (self.sizeM + mc-1) / mc
             availParallelism[3] = nc / nr
             availParallelism[4] = mc / mr
-        if( self.sizeM * self.sizeN <= 64**2 ): # only activate parallelK if it is absolutely necessary
+        if( self.numThreads > 1 and self.sizeM * self.sizeN <= 64**2 * self.numThreads ): # only activate parallelK if it is absolutely necessary
             availParallelism[1] = (self.sizeK + kc-1) / kc
-        elif( self.sizeM * self.sizeN <= 96**2 ): # allow just a little parallelism in K
-            availParallelism[1] = min(4,(self.sizeK + kc-1) / kc)
         else:
             availParallelism[1] = 1
 
@@ -1286,9 +1284,10 @@ class Gett:
                                                code += "%s/*\n"%(self.indent)
                                                code += "%s * Allocate memory for packing buffers\n"%(self.indent)
                                                code += "%s */\n"%(self.indent)
-                                               code += "%sconst uint64_t requestedSize = paddedSizeInner * (numParallel[0] * numParallel[1] * numParallel[2]) +\n"%(self.indent)
-                                               code += "%s                               paddedSizeOuter * (numParallel[0] * numParallel[1]) +\n"%(self.indent)
-                                               code += "%s                               paddedSizeC * numParallel[1];\n"%(self.indent)
+                                               code += "%suint64_t requestedSize = paddedSizeInner * (numParallel[0] * numParallel[1] * numParallel[2]) +\n"%(self.indent)
+                                               code += "%s                               paddedSizeOuter * (numParallel[0] * numParallel[1]);\n"%(self.indent)
+                                               code += "%sif( numParallel[1] > 1 )\n"%(self.indent)
+                                               code += "%s   requestedSize += paddedSizeC * numParallel[1];\n"%(self.indent)
                                                code += "%sif( requestedSize > memBroker.size() )\n"%(self.indent)
                                                code += "%s{\n"%(self.indent)
                                                code += "%s   if( memBroker.isInit() )\n"%(self.indent)
